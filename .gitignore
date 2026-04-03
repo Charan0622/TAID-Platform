@@ -44,3 +44,4 @@ airflow/airflow.db
 
 # MinIO data
 minio-data/
+checkpoints/

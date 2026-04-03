@@ -373,29 +373,257 @@ KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9
 
 ## Phase 3 — Spark Processing + Iceberg Storage
 
-> ⏳ **Status:** Not started
-> 📝 Claude will fill this section after completing Phase 3
+> ✅ **Status:** Complete
 
 ### What Was Done
-_To be written after phase completion_
+
+1. **`docker-compose.yml` (updated)** — Added MinIO (S3-compatible object storage) and a one-time `minio-setup` helper that creates the `telemetry-warehouse` bucket.
+2. **`storage/catalog.py`** — Reusable module that creates a SparkSession pre-configured for Iceberg + MinIO. Every Spark job imports from here so configuration is centralized. Includes automatic JAVA_HOME detection.
+3. **`processing/stream_processor.py`** — Spark Structured Streaming job: reads raw events from Kafka, validates every field against 4 rules, writes valid events to `clean_events` Iceberg table, routes invalid events to `dead_letter` table with rejection reasons.
+4. **`processing/batch_etl.py`** — Spark batch job: reads `clean_events`, computes hourly aggregations (avg, min, max, stddev, count) per device per metric, writes to `hourly_aggregates` table.
+5. **`processing/quality_checks.py`** — Runs 4 SQL-based data quality checks against `clean_events`: row count threshold, null rates per column, value range validation, and duplicate detection. Returns pass/fail per check.
 
 ### Step-by-Step Changes
-_To be written after phase completion_
+
+1. Added MinIO service to `docker-compose.yml` — `minio/minio:latest`, ports 9000 (S3 API) and 9001 (web console), 512MB memory limit
+2. Added `minio-setup` service — runs `mc mb local/telemetry-warehouse` once to create the storage bucket, then exits
+3. Started MinIO: `docker compose up minio minio-setup -d` — bucket created successfully, MinIO using only 74MB RAM
+4. Created `storage/catalog.py` — SparkSession factory with Iceberg catalog config pointing to MinIO
+5. Added automatic JAVA_HOME detection in catalog.py (subprocess call to `/usr/libexec/java_home -v 17`) so Spark works even when `~/.zshrc` hasn't been sourced
+6. Tested catalog — created a test table, inserted rows, read them back, dropped it. Confirmed Iceberg + MinIO working.
+7. Discovered missing `hadoop-aws` JAR — Spark couldn't find `S3AFileSystem` class. Added `org.apache.hadoop:hadoop-aws:3.3.4` to packages.
+8. Created `processing/stream_processor.py` — Structured Streaming with `foreachBatch` for validation routing
+9. First stream processor test failed: "Failed to find data source: kafka" — Spark needs the Kafka connector JAR
+10. Added `org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3` to catalog.py packages
+11. Cleared stale checkpoints: `rm -rf checkpoints/`
+12. Ran stream processor for 120 seconds — successfully processed all Kafka events: 80 valid → `clean_events`, 3 rejected → `dead_letter`
+13. Queried `dead_letter` table — confirmed rejection reasons: "negative value: -146.17", "unknown metric: unknown_sensor_xyz", "negative value: -279.42"
+14. Created `processing/batch_etl.py` — hourly window aggregation job
+15. Ran batch ETL — computed 69 aggregation rows from 80 events, written to `hourly_aggregates`
+16. Created `processing/quality_checks.py` — 4 SQL-based quality checks
+17. Ran quality checks — all 4 passed (row count, null rates, value ranges, duplicates)
+18. Verified Iceberg time-travel: queried `clean_events.snapshots`, then ran `VERSION AS OF` query against snapshot ID — returned all 80 rows from that point in time
+19. All 7 Phase 3 verification checks passed
 
 ### Concepts & Definitions
-_To be written after phase completion_
+
+**Apache Spark** — A distributed computation engine that processes data in parallel across CPU cores. Even on one laptop, it splits work across all available cores for speed. Think of it like hiring 8 workers (your 8 CPU cores) to sort mail instead of one person doing it alone. We use Spark to read raw events from Kafka, validate them, and write clean data to Iceberg tables. Spark is written in Scala (runs on the JVM) but we use **PySpark** — the Python API that sends instructions to Spark's JVM engine.
+
+**PySpark** — Python's interface to Apache Spark. You write Python code, PySpark translates it into operations that run on Spark's JVM engine. This is why we need Java installed — when you run `python stream_processor.py`, PySpark starts a Java process in the background.
+
+**Structured Streaming** — Spark's way of processing data that arrives continuously. Instead of processing all data at once (batch), it processes small chunks as they arrive from Kafka. You write the same code as batch processing — `SELECT`, `WHERE`, `GROUP BY` — but Spark runs it repeatedly on new data. Think of it like a conveyor belt at an airport: bags keep arriving, and the scanner (Spark) checks each batch as it comes.
+
+**Micro-batch** — The small chunk of data Spark processes at a time in Structured Streaming. We configured `trigger(processingTime="10 seconds")`, meaning Spark reads all new Kafka messages every 10 seconds, processes them as a batch, then waits for the next 10 seconds. The trade-off: smaller intervals = lower latency but more overhead; larger intervals = higher efficiency but more delay.
+
+**foreachBatch** — A Structured Streaming output mode where Spark calls YOUR function for each micro-batch. We use it because we need custom logic: validate each row, then split into two different tables (clean vs. dead letter). The alternative, built-in sinks, can only write to one destination.
+
+**Apache Iceberg** — A table format that makes regular files (Parquet) behave like a proper database table. It adds: (1) **Transactions** — writes either fully succeed or fully fail, no half-written data. (2) **Schema enforcement** — data must match the table structure. (3) **Snapshots** — every write creates a new version. You can query any past version (time travel). (4) **Partition evolution** — change how data is organized without rewriting everything. Think of Iceberg as the "table of contents" and "version history" for your data files.
+
+**Snapshot** — An Iceberg concept. Every time you write data to a table, Iceberg creates a snapshot — a point-in-time record of what the table looked like. Each snapshot has a unique ID and timestamp. You can query any past snapshot using `VERSION AS OF <snapshot_id>`. This is called **time travel**. It's powerful for reproducibility: "Train my ML model on the data as it existed at 2pm yesterday."
+
+**Time Travel** — The ability to query a table as it existed at a specific point in time. Iceberg makes this possible by keeping all snapshots and their associated data files. `SELECT * FROM clean_events VERSION AS OF 6664508234308964044` returns the table exactly as it was when that snapshot was committed. Old data files are never deleted until you explicitly run garbage collection.
+
+**Parquet** — A columnar file format optimized for analytics. Instead of storing data row-by-row (like CSV), it stores data column-by-column. This means if you query `SELECT avg(temperature) FROM events`, Spark only reads the temperature column — not every column in the table. This makes analytical queries 10-100x faster. Iceberg stores all data as Parquet files under the hood.
+
+**MinIO** — An S3-compatible object storage server that runs locally. Amazon S3 is THE standard for storing data in the cloud. MinIO speaks the exact same API (protocol), so any tool that works with S3 works with MinIO — including Spark and Iceberg. We use it as our "data lake" — the central place where all Iceberg table data (Parquet files) is physically stored. You can browse files in the MinIO web console at http://localhost:9001 (login: minioadmin/minioadmin).
+
+**S3A** — The Hadoop filesystem connector for S3-compatible storage. When Spark writes to `s3a://telemetry-warehouse/...`, Hadoop's S3A connector translates that into HTTP requests to MinIO's S3 API. The `hadoop-aws` JAR provides this connector. Without it, Spark throws "Class org.apache.hadoop.fs.s3a.S3AFileSystem not found."
+
+**Object Storage / Bucket** — Object storage organizes data into flat "buckets" (top-level containers) containing "objects" (files). Unlike a filesystem with nested folders, object storage uses flat keys that look like paths: `telemetry-warehouse/telemetry_db/clean_events/data/00001.parquet`. Our bucket is `telemetry-warehouse`, and Iceberg organizes the data files inside it.
+
+**Dead Letter Pattern** — When a data record fails validation, instead of silently dropping it (losing evidence), you route it to a separate "dead letter" table with a reason explaining why it was rejected. Think of the post office returning undeliverable mail stamped "wrong address" instead of throwing it away. Our `dead_letter` table stores the original JSON and the rejection reason (e.g., "negative value: -146.17"). This lets you investigate data quality issues, fix the source, and potentially reprocess the records.
+
+**Checkpointing** — Structured Streaming saves its progress to disk — specifically, which Kafka offsets it has already processed. If Spark crashes and restarts, it reads the checkpoint and picks up exactly where it left off. No duplicates, no missed messages. This is called **exactly-once semantics**. Checkpoints are stored in the `checkpoints/` directory. Important: if you change the streaming query structure, you must delete old checkpoints or Spark will error.
+
+**ETL (Extract, Transform, Load)** — The three steps of a data pipeline: Extract data from a source (Kafka), Transform it (validate, clean, aggregate), Load it into a destination (Iceberg tables). Our stream processor does ETL continuously. Our batch job does ETL on a schedule.
+
+**Window Aggregation** — Grouping data by time windows. `F.window(F.col("timestamp"), "1 hour")` creates 1-hour buckets (00:00-01:00, 01:00-02:00, etc.) and groups events into the bucket matching their timestamp. Then we compute aggregate functions (avg, min, max, stddev) within each bucket. This turns millions of raw events into compact hourly summaries.
+
+**Data Quality Checks / Quality Gate** — Automated SQL queries that verify data health: "Are there enough rows? Any unexpected nulls? Values in range? Duplicates?" A quality gate in a pipeline says "don't proceed to the next step unless all checks pass." This prevents bad data from propagating downstream — if the stream processor has a bug, the quality gate catches it before the data reaches ML training or the dashboard.
+
+**SparkSession** — The entry point to all Spark functionality. Creating a SparkSession starts the Spark engine (JVM, executor threads, etc.). All Spark operations — reading data, running SQL, writing tables — go through the SparkSession. We configure it once in `catalog.py` and reuse it in every job.
+
+**Spark Catalog** — A registry that maps table names to their physical storage locations and metadata. When you write `spark.sql("SELECT * FROM telemetry_db.clean_events")`, the catalog resolves `telemetry_db.clean_events` to `s3a://telemetry-warehouse/telemetry_db/clean_events/`. We use Iceberg's Hadoop catalog, which stores this mapping as files in MinIO itself.
 
 ### Architecture Notes
-_To be written after phase completion_
+
+Phase 3 adds the core processing layer between Kafka (input) and the data lake (storage):
+
+```
+Phase 3 architecture:
+
+fake_producer.py
+    │
+    │ sends JSON to telemetry.raw
+    ▼
+┌──────────────┐
+│    Kafka     │  (Docker, port 9092)
+│  topic: raw  │
+└──────┬───────┘
+       │
+       │ Spark reads via Structured Streaming
+       │ (readStream format "kafka")
+       ▼
+┌──────────────────────────────────────┐
+│   stream_processor.py (PySpark)      │
+│                                      │
+│   Validation Rules:                  │
+│   1. timestamp not null/future       │
+│   2. device_id in known list         │
+│   3. value not null/negative         │
+│   4. metric_name in allowed set      │
+│                                      │
+│   ┌──────────┐    ┌──────────────┐   │
+│   │  Valid    │    │   Invalid    │   │
+│   └────┬─────┘    └──────┬───────┘   │
+└────────┼─────────────────┼───────────┘
+         │                 │
+         ▼                 ▼
+┌──────────────┐  ┌──────────────────┐
+│ clean_events │  │   dead_letter    │
+│ (Iceberg)    │  │   (Iceberg)      │
+│ 80 rows      │  │   3 rows         │
+│ + snapshots  │  │   + reasons      │
+└──────┬───────┘  └──────────────────┘
+       │
+       │ batch_etl.py reads clean data
+       ▼
+┌──────────────────┐     ┌─────────────────┐
+│hourly_aggregates │     │ quality_checks  │
+│ (Iceberg)        │     │ 4 SQL checks    │
+│ 69 rows          │     │ all PASS        │
+└──────────────────┘     └─────────────────┘
+
+       All Iceberg tables stored as Parquet files in:
+       ┌──────────────────────────────────┐
+       │  MinIO (Docker, ports 9000/9001) │
+       │  Bucket: telemetry-warehouse     │
+       └──────────────────────────────────┘
+```
+
+**Key architectural decisions:**
+- Spark runs **natively** (not in Docker) to access all CPU cores and avoid Docker memory overhead. The 2GB driver memory limit keeps it laptop-friendly.
+- Iceberg uses a **Hadoop catalog** — metadata stored as files in MinIO. No external metastore DB needed.
+- The stream processor uses **foreachBatch** (not built-in Iceberg sink) because we need to split valid/invalid records into two different tables.
+- **Checkpoints** are stored locally in `checkpoints/` — not in MinIO — for faster access during streaming.
 
 ### Key Code Explained
-_To be written after phase completion_
+
+**Stream processor — reading from Kafka as a stream:**
+```python
+kafka_stream = (
+    spark.readStream
+    .format("kafka")
+    .option("kafka.bootstrap.servers", KAFKA_BROKER)
+    .option("subscribe", KAFKA_TOPIC)
+    .option("startingOffsets", "earliest")
+    .load()
+)
+```
+- `.readStream` — tells Spark this is a streaming (continuous) source, not a one-time read
+- `.format("kafka")` — use the Kafka connector (from `spark-sql-kafka-0-10` JAR)
+- `startingOffsets: "earliest"` — on first run, read all existing messages. After that, checkpoints track the position.
+- `.load()` returns a streaming DataFrame with columns: key, value, topic, partition, offset, timestamp. Our events are in the `value` column as raw bytes.
+
+**Stream processor — parsing JSON from Kafka bytes:**
+```python
+parsed = batch_df.select(
+    F.from_json(
+        F.col("value").cast("string"),
+        StructType([...])
+    ).alias("data"),
+    F.col("value").cast("string").alias("raw_value")
+)
+```
+- `F.col("value").cast("string")` — Kafka sends bytes; cast to string first
+- `F.from_json(string, schema)` — parse the JSON string into structured columns using our defined schema
+- `.alias("data")` — name the parsed struct so we can access fields like `data.device_id`
+- We keep `raw_value` (original JSON) so dead letter entries have the complete original event
+
+**Stream processor — validation routing:**
+```python
+for row in rows:
+    is_valid, reason = validate_event(row)
+    if is_valid:
+        valid_rows.append({...})
+    else:
+        invalid_rows.append({...})
+```
+- We collect the micro-batch to the driver (small enough — just a few seconds of data)
+- Each row runs through 4 validation rules
+- Valid rows get a `processed_at` timestamp and go to `clean_events`
+- Invalid rows get a `rejection_reason` string and go to `dead_letter`
+- This split-routing is why we use `foreachBatch` instead of a simple `.writeStream`
+
+**Batch ETL — window aggregation:**
+```python
+aggregated = (
+    clean_events
+    .groupBy(
+        F.window(F.col("timestamp"), "1 hour").alias("time_window"),
+        F.col("device_id"),
+        F.col("metric_name"),
+    )
+    .agg(
+        F.round(F.avg("value"), 2).alias("avg_value"),
+        F.round(F.min("value"), 2).alias("min_value"),
+        ...
+    )
+)
+```
+- `F.window(col, "1 hour")` — creates hourly buckets. An event at 14:37 goes into the 14:00-15:00 window.
+- `.groupBy(window, device_id, metric_name)` — one aggregation row per (hour, device, metric) combination
+- `.agg(F.avg, F.min, F.max, F.stddev, F.count)` — compute all statistics in one pass
+- `.withColumn("hour_window", F.col("time_window.start"))` — extract just the window start time for readability
+
+**Quality checks — null rate check:**
+```python
+SUM(CASE WHEN event_id IS NULL THEN 1 ELSE 0 END) as null_event_id
+```
+- `CASE WHEN ... IS NULL THEN 1 ELSE 0` — creates a 1/0 flag for each row
+- `SUM(...)` counts how many nulls exist in that column
+- Dividing by total rows gives the null rate as a percentage
+- We check every column independently — one bad column doesn't mask another
+
+**Catalog — centralized Spark configuration:**
+```python
+.config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT)
+.config("spark.hadoop.fs.s3a.path.style.access", "true")
+```
+- `fs.s3a.endpoint` — tells Hadoop's S3A connector to talk to MinIO instead of real AWS S3
+- `path.style.access` — use `http://localhost:9000/bucket/key` format instead of `http://bucket.localhost:9000/key` (MinIO doesn't support virtual-hosted style)
 
 ### What Could Go Wrong
-_To be written after phase completion_
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| "Failed to find data source: kafka" | Missing `spark-sql-kafka-0-10` JAR | Add `org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3` to `spark.jars.packages` |
+| "Class S3AFileSystem not found" | Missing Hadoop AWS connector | Add `org.apache.hadoop:hadoop-aws:3.3.4` to `spark.jars.packages` |
+| "Unable to locate Java Runtime" | JAVA_HOME not set in current shell | `export JAVA_HOME=$(/usr/libexec/java_home -v 17)` or let catalog.py auto-detect |
+| Spark OOM (out of memory) | Driver memory too high or too many shuffle partitions | Set `spark.driver.memory=2g` and `spark.sql.shuffle.partitions=8` |
+| "Bucket does not exist" | `minio-setup` didn't run or failed | Run `docker compose up minio-setup` or manually create via MinIO console |
+| Stream processor processes 0 events | No data in Kafka topic, or stale checkpoint | Run `fake_producer.py` first; delete `checkpoints/` directory and restart |
+| "Table already exists" error | Previous run created the table | Use `CREATE TABLE IF NOT EXISTS` (already in our code) |
+| Py4J errors on shutdown | Spark JVM shutting down during SIGINT | Harmless — the JVM is cleaning up. Data was already written. |
+| Batch ETL shows 0 aggregation rows | `clean_events` is empty | Run the stream processor first to populate clean_events |
+| MinIO "access denied" | Wrong credentials | Use `minioadmin/minioadmin` — check `MINIO_ROOT_USER` in docker-compose.yml |
+| First run is very slow | Spark downloading JARs from Maven Central | Normal — JARs are cached in `~/.ivy2/` after first download |
+| Checkpoint error after code change | Old checkpoint incompatible with new query | Delete `checkpoints/` directory and restart stream processor |
 
 ### What I Should Be Able to Explain
-_To be written after phase completion_
+
+- [ ] What Spark is and why it's faster than processing data row-by-row in plain Python
+- [ ] What Structured Streaming is and how micro-batches work
+- [ ] What Iceberg adds on top of regular Parquet files (transactions, snapshots, schema enforcement)
+- [ ] What a snapshot is and how time-travel queries work
+- [ ] What MinIO is and why we use it instead of the local filesystem
+- [ ] What the dead letter pattern is and why dropping bad data silently is dangerous
+- [ ] What checkpointing does and why it enables exactly-once processing
+- [ ] What ETL means and the difference between streaming ETL and batch ETL
+- [ ] What a window aggregation is and why hourly summaries are useful
+- [ ] What data quality checks are and why they should gate the pipeline
+- [ ] Why Spark needs Java and the Kafka/Hadoop/AWS JARs to function
+- [ ] How `catalog.py` centralizes configuration so all Spark jobs stay consistent
 
 ---
 

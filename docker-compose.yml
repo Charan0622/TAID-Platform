@@ -1,10 +1,10 @@
 # docker-compose.yml — Defines all containerized services for the platform.
-# Phase 2 starts with just Kafka. We'll add MinIO, Airflow, etc. in later phases.
+# Phase 2: Kafka | Phase 3: + MinIO | Phase 4: + Airflow
 #
 # Usage:
-#   docker compose up kafka -d     ← start Kafka in the background
-#   docker compose logs kafka -f   ← watch Kafka's logs in real-time
-#   docker compose down            ← stop everything
+#   docker compose up kafka minio -d   ← start Kafka + MinIO
+#   docker compose logs kafka -f       ← watch Kafka's logs
+#   docker compose down                ← stop everything
 
 services:
   kafka:
@@ -48,3 +48,37 @@ services:
     mem_limit: 1g
     # Restart automatically if it crashes (but not if we manually stop it)
     restart: unless-stopped
+
+  minio:
+    # MinIO — S3-compatible object storage that runs locally.
+    # Iceberg tables store their data files (Parquet) here, organized in "buckets."
+    # Think of it as your personal Amazon S3 on your laptop.
+    image: minio/minio:latest
+    platform: linux/arm64            # REQUIRED: Apple Silicon M4
+    container_name: minio
+    ports:
+      - "9000:9000"                  # S3 API port (Spark/Iceberg connect here)
+      - "9001:9001"                  # Web console (browse files in your browser)
+    command: server /data --console-address ":9001"
+    environment:
+      # Login credentials for MinIO (like AWS access keys, but local)
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    mem_limit: 512m
+    restart: unless-stopped
+
+  # One-time helper: creates the storage bucket that Iceberg needs.
+  # Runs once, creates the bucket, then exits. Won't fail if bucket already exists.
+  minio-setup:
+    image: minio/mc:latest           # MinIO Client — CLI tool for managing MinIO
+    platform: linux/arm64
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5 &&
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb local/telemetry-warehouse --ignore-existing &&
+      echo 'Bucket telemetry-warehouse created successfully'
+      "
+    restart: "no"                    # Run once and exit
