@@ -849,29 +849,220 @@ t7_success = PythonOperator(
 
 ## Phase 5 — PyTorch Anomaly Detection
 
-> ⏳ **Status:** Not started
-> 📝 Claude will fill this section after completing Phase 5
+> ✅ **Status:** Complete
 
 ### What Was Done
-_To be written after phase completion_
+
+1. **`ml/dataset.py`** — Loads clean_events from Iceberg (optionally from a specific snapshot), pivots metrics into feature vectors (1 row = 1 time window with 5 metric columns), normalizes to [0,1] with MinMaxScaler, splits chronologically into train/val/test, returns PyTorch DataLoaders.
+2. **`ml/model.py`** — PyTorch autoencoder: Encoder (5→64→32→16) compresses inputs to a 16-dim bottleneck, Decoder (16→32→64→5) reconstructs them. ReLU activations, Dropout regularization, Sigmoid output. 5,973 trainable parameters.
+3. **`ml/train.py`** — Training loop: MSE loss, Adam optimizer, early stopping (patience=5), MPS GPU acceleration. Saves model checkpoint and full experiment log (hyperparams, losses, timing, dataset info) to `experiments/{experiment_id}/`.
+4. **`ml/evaluate.py`** — Loads trained model and test data, computes per-sample reconstruction error, sets anomaly threshold at 95th percentile of training errors, generates synthetic anomalies for testing, calculates precision/recall/F1, saves evaluation report JSON.
 
 ### Step-by-Step Changes
-_To be written after phase completion_
+
+1. Stopped Airflow container to free ~1.2GB RAM for PyTorch: `docker stop airflow`
+2. Needed more data for ML — ran `fake_producer.py` for 2 minutes (238 events) then stream processor (228 valid → clean_events)
+3. Created `ml/dataset.py` with pivot approach: per-device-per-window
+4. First test: 0 feature vectors — data too sparse (50 devices × 5 metrics, few time windows have all 5)
+5. Ran producer for 5 more minutes (595 events), processed through stream (888 valid events total)
+6. Changed pivot strategy: aggregate across ALL devices per 1-minute window instead of per-device. Fill missing metrics with column mean
+7. Re-tested: 14 feature vectors — small but workable for a learning build
+8. Lowered minimum threshold from 10 to 5 vectors
+9. Created `ml/model.py` — autoencoder architecture, tested forward pass with dummy data
+10. Created `ml/train.py` — training loop with MPS support
+11. Ran training: 50 epochs, loss decreased 0.113→0.058 (train), 0.090→0.067 (val), saved to `experiments/exp_20260402_225105/`
+12. Confirmed MPS GPU was used (output: "Using device: MPS (Apple Silicon GPU)")
+13. Created `ml/evaluate.py` — evaluation with synthetic anomalies
+14. Ran evaluation: precision=1.00, recall=0.60, F1=0.75, zero false positives on normal data
+15. All 7 Phase 5 verification checks passed
 
 ### Concepts & Definitions
-_To be written after phase completion_
+
+**Autoencoder** — A neural network that learns to compress data and then reconstruct it. Imagine describing a photo with only 3 words, then someone recreating it from those words. If the photo is a "normal" scene you've practiced with, the reconstruction is close. If it's bizarre, the reconstruction fails badly. The gap between original and reconstruction is the **reconstruction error** — high error signals an anomaly. Our autoencoder compresses 5 telemetry metrics into 16 numbers (the bottleneck), then expands back to 5.
+
+**Encoder** — The first half of the autoencoder: compresses input down to a small representation. Our encoder: 5 features → 64 neurons → 32 → 16 (bottleneck). Each layer has fewer neurons, forcing the network to keep only the most essential patterns — like summarizing a novel into a paragraph.
+
+**Decoder** — The second half: reconstructs the original input from the compressed representation. Our decoder: 16 → 32 → 64 → 5 features. It's the mirror image of the encoder.
+
+**Bottleneck (Latent Space)** — The narrowest layer in the autoencoder (16 neurons in our case). This is where the "essence" of normal data is captured. If you forced someone to describe every meal they ate using only 16 numbers, they'd learn to encode the most important aspects. The bottleneck forces the network to learn which patterns matter most.
+
+**Reconstruction Error** — The difference between the autoencoder's input and output, measured as Mean Squared Error (MSE). For each sample: average of (original - reconstructed)² across all 5 features. Normal data: low error (model learned this pattern). Anomalous data: high error (model never learned this pattern).
+
+**MSE (Mean Squared Error)** — The loss function we use: average of squared differences between predicted and actual values. Why squared? Squaring makes large errors count much more than small errors, which is exactly what we want — anomalies should produce dramatically higher errors. Formula: MSE = mean((predicted - actual)²).
+
+**Adam Optimizer** — The algorithm that adjusts model weights to reduce loss. "Adam" stands for Adaptive Moment Estimation. It's the most popular optimizer because it adapts the learning rate per-parameter — features that rarely update get bigger steps, frequent ones get smaller steps. We set `lr=1e-3` (learning rate = 0.001), meaning each weight update step is 0.1% of the gradient.
+
+**Epoch** — One complete pass through all training data. In our case, 9 training samples viewed once = 1 epoch. We run up to 50 epochs, showing the model the same data repeatedly so it can gradually refine its weights. Each epoch, the loss should decrease (if the model is learning).
+
+**Early Stopping** — A technique to prevent overfitting. If validation loss hasn't improved for `patience` epochs (5 in our case), stop training. Without this, the model might memorize the training data perfectly but perform terribly on new data. It's like studying flashcards — at some point you've learned the concepts; further study just makes you memorize specific card wordings.
+
+**Overfitting** — When a model learns the training data too well, including its noise and quirks, instead of learning general patterns. An overfitted anomaly detector would only recognize the exact patterns it trained on, flagging anything slightly different as anomalous (too many false alarms). Dropout and early stopping both combat overfitting.
+
+**Dropout** — A regularization technique: during training, randomly set 20% of neurons to zero in each forward pass. This prevents any single neuron from becoming too important and forces the network to learn redundant representations. Think of it like training a team where random members are absent each day — the team learns to function without depending on any one person. Dropout is disabled during evaluation (`model.eval()`).
+
+**ReLU (Rectified Linear Unit)** — An activation function: output = max(0, x). If the input is positive, pass it through unchanged. If negative, output zero. Simple, fast, and effective. It adds "non-linearity" to the network — without it, stacking layers would be no different from a single layer (because linear operations compose into linear operations).
+
+**Sigmoid** — An activation function that squashes any input to the range [0, 1]. We use it on the decoder's output because our normalized input features are in [0, 1], and we want the reconstruction to be in the same range.
+
+**MPS (Metal Performance Shaders)** — Apple's GPU framework for M-series chips. PyTorch can offload tensor operations to the M4's GPU via MPS, making training faster. This only works when running natively on macOS (not inside Docker, which runs Linux ARM64 and can't access the Mac GPU). We check `torch.backends.mps.is_available()` and use `torch.device("mps")`.
+
+**Feature Engineering** — Transforming raw data into a format suitable for ML. Our raw data is one-metric-per-row; the autoencoder needs a fixed-size numeric vector per sample. We pivot the data so each row has all 5 metrics for one time window, then normalize values to [0, 1]. Good feature engineering often matters more than model architecture.
+
+**Pivoting** — Reshaping data from "long" format (many rows, one metric per row) to "wide" format (one row per entity, one column per metric). Like a spreadsheet: instead of 5 rows for device_001's readings, we get 1 row with 5 columns. We use `pandas.pivot_table()` with `aggfunc='mean'` to handle duplicate readings.
+
+**MinMaxScaler (Normalization)** — Scales each feature to the [0, 1] range: `x_scaled = (x - min) / (max - min)`. Why? Neural networks train better when all inputs are on a similar scale. Without normalization, CPU usage (0-100) would dominate network latency (0.5-200ms) simply because of its larger numeric range. The scaler parameters are saved for use during inference.
+
+**Time-based Split** — Splitting data chronologically: oldest 70% for training, next 15% for validation, newest 15% for testing. This simulates reality: you train on historical data and predict on future data. Random splits would leak future information into training (the model could learn temporal patterns that only exist because it "saw" later data).
+
+**Precision** — Of everything the model flagged as anomalous, what percentage actually was? Precision = TP / (TP + FP). High precision = few false alarms. Our model achieved 1.00 precision — every flag was a real anomaly.
+
+**Recall** — Of all actual anomalies, what percentage did the model catch? Recall = TP / (TP + FN). High recall = few missed detections. Our model achieved 0.60 recall — caught 3 of 5 synthetic anomalies.
+
+**F1 Score** — The harmonic mean of precision and recall: F1 = 2 × (P × R) / (P + R). Balances both metrics. Our F1 of 0.75 reflects high precision but moderate recall — the model is conservative (rarely cries wolf, but misses some anomalies).
+
+**Anomaly Threshold** — The reconstruction error boundary above which we flag a sample as anomalous. We set it at the 95th percentile of training errors — "anything with higher error than 95% of normal training data is suspicious." Lower threshold = catch more anomalies but more false alarms. Higher threshold = fewer false alarms but miss more anomalies.
+
+**Experiment Tracking** — Recording everything about a training run: hyperparameters, dataset snapshot, loss curves, evaluation metrics, model checkpoint. This makes experiments reproducible: "I can reload the exact data and model from experiment exp_20260402_225105 and get the same results." We save everything to JSON files in the `experiments/` directory.
 
 ### Architecture Notes
-_To be written after phase completion_
+
+Phase 5 adds the ML layer that consumes data from Iceberg and produces anomaly detection results:
+
+```
+Phase 5 architecture:
+
+┌─────────────────────────────────────────────────────┐
+│  Iceberg Tables (MinIO)                              │
+│  telemetry_db.clean_events (1196 events)             │
+│  ↓ snapshot_id for reproducibility                   │
+└──────────────────┬──────────────────────────────────┘
+                   │
+                   │ dataset.py loads via Spark
+                   │ (pivot → normalize → split)
+                   ▼
+┌─────────────────────────────────────────────────────┐
+│  PyTorch (NATIVE on Mac, using MPS GPU)              │
+│                                                      │
+│  ┌────────────┐    ┌────────────┐    ┌───────────┐  │
+│  │ Train set  │    │  Val set   │    │ Test set  │  │
+│  │ (70%)      │    │  (15%)     │    │ (15%)     │  │
+│  └─────┬──────┘    └─────┬──────┘    └─────┬─────┘  │
+│        │                 │                 │         │
+│        ▼                 ▼                 ▼         │
+│  ┌─────────────────────────────────────────────┐    │
+│  │  TelemetryAutoencoder (5,973 params)        │    │
+│  │  Encoder: 5 → 64 → 32 → 16 (bottleneck)    │    │
+│  │  Decoder: 16 → 32 → 64 → 5                 │    │
+│  └─────────────────────────────────────────────┘    │
+│        │                                             │
+│        ▼                                             │
+│  ┌─────────────────────────────────────────────┐    │
+│  │  experiments/{experiment_id}/                │    │
+│  │    model.pt          (trained weights)       │    │
+│  │    experiment.json   (hyperparams, losses)   │    │
+│  │    evaluation.json   (P/R/F1, thresholds)    │    │
+│  └─────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────┘
+```
+
+**Key architectural decisions:**
+- PyTorch runs **natively** (not in Docker) to access MPS GPU acceleration. Docker containers run Linux and can't access the Mac's Metal GPU.
+- Stopped Airflow container during training to free ~1.2GB RAM — per CLAUDE.md's memory management plan, never run Spark + Airflow + PyTorch simultaneously.
+- Data is loaded via Spark (to read Iceberg tables), converted to Pandas, then to PyTorch tensors. This Spark→Pandas handoff is fine for our dataset size.
+- Experiment tracking uses simple JSON files instead of MLflow's full tracking server — lightweight and sufficient for local dev.
+- Pivoting aggregates across all devices per time window (not per-device) because our small dataset is too sparse for per-device vectors.
 
 ### Key Code Explained
-_To be written after phase completion_
+
+**Autoencoder forward pass:**
+```python
+def forward(self, x):
+    latent = self.encoder(x)       # 5 features → 16-dim compressed
+    reconstructed = self.decoder(latent)  # 16-dim → 5 features
+    return reconstructed
+```
+- Input `x` is a batch of samples, shape (batch_size, 5)
+- `self.encoder(x)` passes through 3 layers: Linear→ReLU→Dropout→Linear→ReLU→Dropout→Linear→ReLU
+- The 16-dim `latent` vector is the compressed representation
+- `self.decoder(latent)` mirrors the encoder, ending with Sigmoid to keep output in [0, 1]
+- The model learns to minimize the difference between `x` and `reconstructed`
+
+**Training one epoch — the core learning step:**
+```python
+reconstructed = model(batch_input)         # Forward pass
+loss = criterion(reconstructed, batch_target)  # Measure error
+optimizer.zero_grad()  # Clear old gradients
+loss.backward()        # Compute new gradients
+optimizer.step()       # Update weights
+```
+- `criterion(reconstructed, batch_target)` — MSE between reconstruction and original
+- `optimizer.zero_grad()` — PyTorch accumulates gradients by default; we must clear them each step
+- `loss.backward()` — backpropagation: compute how much each weight contributed to the error
+- `optimizer.step()` — adjust each weight in the direction that reduces error
+
+**Early stopping logic:**
+```python
+if val_loss < best_val_loss:
+    best_val_loss = val_loss
+    epochs_without_improvement = 0
+    torch.save(model.state_dict(), "model.pt")  # Save best model
+else:
+    epochs_without_improvement += 1
+
+if epochs_without_improvement >= patience:
+    break  # Stop training
+```
+- We only save the model when validation loss improves (not the final model)
+- If validation loss stagnates for `patience` epochs, training stops
+- This prevents overfitting: the saved model is from the epoch with best generalization
+
+**Reconstruction error for anomaly detection:**
+```python
+batch_errors = torch.mean((batch_input - reconstructed) ** 2, dim=1)
+```
+- `(batch_input - reconstructed) ** 2` — element-wise squared difference for each feature
+- `torch.mean(..., dim=1)` — average across features (dim=1), giving one error per sample
+- High error = model couldn't reconstruct this sample = potential anomaly
+
+**Setting the anomaly threshold:**
+```python
+threshold_95 = np.percentile(train_errors, 95)
+predicted_anomalies = test_errors > threshold_95
+```
+- Training data is assumed to be "normal" (it went through validation in Phase 3)
+- 95th percentile means: 95% of normal data has error below this value
+- Anything above this is flagged as anomalous
+- It's a trade-off: lower percentile = more sensitive (catches more but more false alarms)
 
 ### What Could Go Wrong
-_To be written after phase completion_
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| "Only 0 feature vectors after pivoting" | Data too sparse — devices don't have all 5 metrics per window | Aggregate across all devices per time window, or use fillna for missing metrics |
+| MPS not available | Running inside Docker, or outdated PyTorch | Run natively on Mac. `pip install --upgrade torch` |
+| OOM during training | Dataset too large for GPU memory | Reduce batch_size, or switch to CPU for large datasets |
+| Loss not decreasing | Learning rate too high or too low | Try `lr=1e-4` (slower) or `lr=1e-2` (faster). Check data normalization. |
+| Loss is NaN | Extreme input values or too-high learning rate | Ensure MinMaxScaler is applied. Reduce learning rate. |
+| Checkpoint won't load | Model architecture changed since training | Ensure model.py matches the architecture used during training |
+| Low recall (missing anomalies) | Threshold too high or model undertrained | Lower threshold percentile (90th instead of 95th), or train on more data |
+| High false positive rate | Threshold too low or noisy training data | Raise threshold percentile (99th instead of 95th) |
+| Spark error during data loading | MinIO or Kafka not running | `docker compose up kafka minio -d` before running ML code |
+| Training too slow on CPU | MPS not detected | Check `torch.backends.mps.is_available()`. Reinstall PyTorch if False. |
 
 ### What I Should Be Able to Explain
-_To be written after phase completion_
+
+- [ ] What an autoencoder is and how the bottleneck forces it to learn "normal" patterns
+- [ ] Why reconstruction error is high for anomalies and low for normal data
+- [ ] What MSE loss measures and why we use it for autoencoders
+- [ ] What an epoch is and why we train for multiple epochs
+- [ ] What early stopping does and why it prevents overfitting
+- [ ] What dropout does and why it's only active during training
+- [ ] What MPS is and why PyTorch must run natively (not in Docker) to use it
+- [ ] Why we split by time instead of randomly for time series data
+- [ ] What normalization (MinMaxScaler) does and why it matters for neural networks
+- [ ] What precision, recall, and F1 measure and the trade-off between them
+- [ ] How the anomaly threshold is set and why the 95th percentile is a reasonable default
+- [ ] Why we track experiments (snapshot_id, hyperparams, metrics) for reproducibility
 
 ---
 
