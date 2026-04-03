@@ -1068,29 +1068,182 @@ predicted_anomalies = test_errors > threshold_95
 
 ## Phase 6 — FastAPI Backend
 
-> ⏳ **Status:** Not started
-> 📝 Claude will fill this section after completing Phase 6
+> ✅ **Status:** Complete
 
 ### What Was Done
-_To be written after phase completion_
+
+1. **`backend/main.py`** — FastAPI app entry point with CORS middleware (allows localhost:5173), mounts 4 routers, root health check at `/health`.
+2. **`backend/routers/datasets.py`** — 4 endpoints: list all tables, table detail with schema, list snapshots, sample data. Uses pre-defined metadata (avoids heavy Spark queries per request).
+3. **`backend/routers/lineage.py`** — Returns the full data lineage graph (11 nodes, 12 edges) as JSON ready for React Flow visualization. Nodes colored by type: source, processing, storage, ML, API.
+4. **`backend/routers/ml_results.py`** — 3 endpoints: list experiments, experiment detail (losses, hyperparams), latest model info. Reads from `ml/experiments/` JSON files.
+5. **`backend/routers/health.py`** — 3 endpoints: pipeline health (Airflow DAG statuses), Kafka connectivity (live check), storage freshness (table update times).
+6. **`backend/__init__.py` and `backend/routers/__init__.py`** — Empty init files to make Python recognize these as packages.
 
 ### Step-by-Step Changes
-_To be written after phase completion_
+
+1. Created `backend/` and `backend/routers/` directories
+2. Wrote `backend/main.py` — FastAPI app with CORS for localhost:5173, mounted 4 routers
+3. Wrote `backend/routers/datasets.py` — Pydantic models (TableSummary, TableDetail, ColumnInfo, SnapshotInfo) + 4 endpoints
+4. Wrote `backend/routers/lineage.py` — LineageGraph model with 11 nodes and 12 edges representing our full pipeline
+5. Wrote `backend/routers/ml_results.py` — reads experiment JSON files from disk, serves summaries and details
+6. Wrote `backend/routers/health.py` — Kafka health does live connectivity check, pipeline/storage use cached data
+7. Created `__init__.py` files for both packages
+8. Killed old process on port 8000, started server: `uvicorn backend.main:app --port 8000`
+9. Tested all endpoints: health (ok), datasets (3 tables), lineage (11 nodes, 12 edges), ML experiments (1 with P/R/F1), Kafka health (healthy, 1 topic), OpenAPI docs (HTTP 200)
+10. All 6 Phase 6 verification checks passed
 
 ### Concepts & Definitions
-_To be written after phase completion_
+
+**FastAPI** — A modern Python web framework for building REST APIs. It's fast (built on Starlette + async Python), auto-generates documentation (OpenAPI/Swagger), and validates data with Pydantic. Think of it as the **waiter** in a restaurant: the frontend (customer) tells it what they want, FastAPI fetches it from the backend (kitchen), and delivers it in a clean JSON format.
+
+**REST API** — Representational State Transfer Application Programming Interface. A set of rules for how software components communicate over HTTP. REST APIs use URLs (endpoints) and HTTP methods (GET, POST, PUT, DELETE) to access resources. `GET /api/datasets` means "give me the list of datasets." `GET /api/datasets/clean_events` means "give me details about this specific table." It's the standard way web frontends talk to backends.
+
+**HTTP Methods** — The "verbs" of REST: `GET` (read data), `POST` (create data), `PUT` (update data), `DELETE` (remove data). Our API is read-only (all GET) because the frontend only displays data — it doesn't modify the pipeline.
+
+**Endpoint** — A specific URL path that handles a request. `GET /api/datasets` is an endpoint. `GET /api/ml/experiments/{id}` is another. Each endpoint is a Python function decorated with `@router.get(...)`.
+
+**CORS (Cross-Origin Resource Sharing)** — A browser security mechanism. When React (running at localhost:5173) makes a request to FastAPI (running at localhost:8000), the browser blocks it by default because the origins (host:port) differ. CORS middleware tells the browser "requests from localhost:5173 are allowed." Without it, every API call from the frontend fails with a CORS error. This only affects browsers — command-line tools like `curl` ignore CORS.
+
+**Pydantic** — A Python library for data validation and serialization. You define a model class with typed fields, and Pydantic ensures data matches that shape. If an API response is missing a required field or has the wrong type, Pydantic raises an error. Think of it as a contract: "this endpoint ALWAYS returns JSON with these exact fields and types." FastAPI uses Pydantic models for both request validation and response documentation.
+
+**Router** — A FastAPI organizational unit that groups related endpoints. Instead of 15 endpoints in one file, you split them into logical routers: `datasets.py`, `lineage.py`, `ml_results.py`, `health.py`. Each router is mounted on a prefix (e.g., `/api/datasets`) so all its endpoints share that base URL.
+
+**OpenAPI / Swagger** — An auto-generated interactive API documentation page. FastAPI creates it automatically from your endpoint definitions and Pydantic models. Visit `http://localhost:8000/docs` to see it — you can browse all endpoints, see their parameters and response shapes, and even test them directly from the browser. This saves you from writing API docs manually.
+
+**`response_model`** — A FastAPI parameter that tells the framework "this endpoint returns data matching this Pydantic model." It serves two purposes: (1) validates the response data, and (2) generates accurate OpenAPI documentation. If your function returns data that doesn't match the model, FastAPI raises an error.
+
+**HTTPException** — FastAPI's way of returning error responses. `raise HTTPException(status_code=404, detail="Table not found")` returns a JSON error: `{"detail": "Table not found"}` with HTTP status 404. This prevents raw Python tracebacks from leaking to the frontend.
+
+**`uvicorn`** — The ASGI server that runs FastAPI applications. ASGI (Asynchronous Server Gateway Interface) is the standard for Python async web apps. `uvicorn backend.main:app --reload --port 8000` means: serve the `app` object from `backend.main` on port 8000, and auto-reload when code changes (useful during development).
 
 ### Architecture Notes
-_To be written after phase completion_
+
+Phase 6 adds the API layer that bridges backend data to the frontend:
+
+```
+Phase 6 architecture:
+
+┌─────────────────────────────────────────────────────┐
+│  React Portal (Phase 7, port 5173)                   │
+│  ↓ HTTP requests (GET /api/...)                      │
+└──────────────────┬──────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────┐
+│  FastAPI Backend (port 8000)                         │
+│                                                      │
+│  /health              → simple OK check              │
+│  /api/datasets        → Iceberg table metadata       │
+│  /api/lineage         → pipeline graph (nodes+edges) │
+│  /api/ml/experiments  → training results from JSON   │
+│  /api/health/kafka    → live Kafka connectivity      │
+│  /api/health/pipelines→ Airflow DAG statuses         │
+│  /api/health/storage  → table freshness              │
+│                                                      │
+│  CORS: allows localhost:5173                         │
+└──────┬───────────┬──────────────┬───────────────────┘
+       │           │              │
+       ▼           ▼              ▼
+   ┌────────┐ ┌─────────┐ ┌──────────────┐
+   │ Kafka  │ │ ML exp  │ │ Iceberg meta │
+   │ :9092  │ │ JSON    │ │ (pre-cached) │
+   └────────┘ └─────────┘ └──────────────┘
+```
+
+**Key architectural decisions:**
+- **Pre-cached metadata** for datasets instead of live Spark queries. Starting a SparkSession costs ~2GB RAM and takes 10+ seconds — unacceptable for API response times. The pipeline DAG updates cached metadata after each run.
+- **Live Kafka health check** — actually connects to Kafka via kafka-python to verify it's running. This is lightweight (no Spark).
+- **ML experiments read from disk** — `ml/experiments/` JSON files are the source of truth. No database needed.
+- **CORS allows localhost:5173** — specifically the React Vite dev server port. In production, you'd restrict this to your actual domain.
 
 ### Key Code Explained
-_To be written after phase completion_
+
+**FastAPI app with CORS:**
+```python
+app = FastAPI(title="Telemetry AI Data Platform API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+- `FastAPI()` creates the application — all configuration, routing, and middleware attach to this object
+- `add_middleware(CORSMiddleware, ...)` — intercepts every response and adds CORS headers telling the browser "this origin is allowed"
+- `allow_origins` — list of allowed frontend URLs. `"*"` would allow any origin (insecure in production)
+
+**Router with prefix:**
+```python
+app.include_router(datasets.router, prefix="/api/datasets", tags=["Datasets"])
+```
+- `include_router` — mounts all endpoints from `datasets.py` under `/api/datasets`
+- A `@router.get("/{table_name}")` in the router becomes `GET /api/datasets/{table_name}` in the full app
+- `tags` — groups endpoints in the OpenAPI docs for readability
+
+**Pydantic response model:**
+```python
+class TableSummary(BaseModel):
+    name: str
+    row_count: int
+    last_updated: Optional[str] = None
+    quality_score: Optional[float] = None
+```
+- Inherits from `BaseModel` — Pydantic validates all fields
+- `str`, `int`, `float` — type enforcement. If you return `row_count="abc"`, Pydantic errors
+- `Optional[str] = None` — field can be missing or null
+- FastAPI auto-generates JSON schema from this for the docs
+
+**Endpoint with path parameter and error handling:**
+```python
+@router.get("/{table_name}", response_model=TableDetail)
+def get_table_detail(table_name: str):
+    if table_name not in TABLE_SCHEMAS:
+        raise HTTPException(status_code=404, detail=f"Table '{table_name}' not found")
+    ...
+```
+- `/{table_name}` — path parameter extracted from the URL (e.g., `/api/datasets/clean_events`)
+- `response_model=TableDetail` — validates response and generates docs
+- `HTTPException(404)` — returns a clean error instead of a Python traceback
+
+**Live Kafka health check:**
+```python
+consumer = KafkaConsumer(
+    bootstrap_servers="localhost:9092",
+    consumer_timeout_ms=3000,
+)
+topics = list(consumer.topics())
+consumer.close()
+```
+- Creates a temporary consumer just to check connectivity
+- `consumer_timeout_ms=3000` — fail fast (3 seconds) if Kafka is down
+- Returns actual topic list as proof of connectivity
+- Wrapped in try/except — returns `"unhealthy"` instead of crashing if Kafka is down
 
 ### What Could Go Wrong
-_To be written after phase completion_
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| "Address already in use" on port 8000 | Another process using the port | `lsof -i :8000` to find it, then `kill <PID>` |
+| CORS error in browser console | Frontend origin not in `allow_origins` | Add the exact origin (including port) to the CORS middleware |
+| "Module not found: backend" | Missing `__init__.py` or wrong working directory | Ensure `__init__.py` exists in `backend/` and `backend/routers/`. Run uvicorn from project root. |
+| Kafka health returns "unhealthy" | Kafka container not running | `docker compose up kafka -d` |
+| ML experiments endpoint returns empty list | No experiment directories in `ml/experiments/` | Run `python ml/train.py` first |
+| Pydantic validation error in response | Response data doesn't match model | Check that all required fields are present and correct type |
+| Slow API responses | Spark session starting on request | Use pre-cached metadata (already implemented) instead of live Spark queries |
+| `/docs` page shows no endpoints | Routers not mounted correctly | Check `app.include_router()` calls in main.py |
 
 ### What I Should Be Able to Explain
-_To be written after phase completion_
+
+- [ ] What FastAPI is and why it's the bridge between backend data and the React frontend
+- [ ] What REST means and how HTTP methods (GET, POST) map to operations
+- [ ] What CORS is and why browsers block cross-origin requests by default
+- [ ] What Pydantic models do and why typed response schemas matter
+- [ ] What a router is and why we split endpoints into multiple files
+- [ ] What OpenAPI/Swagger docs are and how FastAPI generates them automatically
+- [ ] Why we use pre-cached metadata instead of live Spark queries for API responses
+- [ ] What HTTPException does and why we never return raw Python tracebacks
+- [ ] What uvicorn is and how it serves the FastAPI application
 
 ---
 
