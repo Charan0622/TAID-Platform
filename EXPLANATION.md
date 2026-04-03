@@ -1249,44 +1249,368 @@ consumer.close()
 
 ## Phase 7 — React Portal
 
-> ⏳ **Status:** Not started
-> 📝 Claude will fill this section after completing Phase 7
+> ✅ **Status:** Complete
 
 ### What Was Done
-_To be written after phase completion_
+
+1. **`portal/`** — Initialized with Vite + React template, installed dependencies: axios, react-router-dom, recharts, @xyflow/react, tailwindcss, @tailwindcss/vite.
+2. **`portal/vite.config.js`** — Configured Vite with React and Tailwind CSS plugins.
+3. **`portal/src/index.css`** — Replaced Vite defaults with Tailwind import (`@import "tailwindcss"`).
+4. **`portal/src/main.jsx`** — Wrapped App in BrowserRouter for client-side routing.
+5. **`portal/src/App.jsx`** — Main layout with dark sidebar navigation (4 NavLinks) and Routes for 4 pages.
+6. **`portal/src/pages/DataCatalog.jsx`** — Table listing all Iceberg datasets from `/api/datasets`. Click to expand schema details. Color-coded quality scores (green/yellow/red).
+7. **`portal/src/pages/LineageGraph.jsx`** — Interactive React Flow diagram from `/api/lineage`. 11 nodes colored by type (blue=source, orange=processing, cyan=storage, red=ML, purple=API), 12 animated edges. Zoomable and pannable.
+8. **`portal/src/pages/PipelineHealth.jsx`** — Three status cards (Kafka, Pipelines, Storage) + DAG runs table + table freshness table. Auto-refreshes every 30 seconds.
+9. **`portal/src/pages/MLDashboard.jsx`** — Experiment list table, metric cards (val loss, precision, recall, F1), Recharts training loss curve, hyperparameters grid. Click experiment to view detail.
 
 ### Step-by-Step Changes
-_To be written after phase completion_
+
+1. Ran `npm create vite@latest portal -- --template react` — scaffolded React project
+2. Ran `npm install` — installed base dependencies
+3. Installed additional packages: `npm install axios react-router-dom recharts @xyflow/react tailwindcss @tailwindcss/vite`
+4. Configured Tailwind in `vite.config.js` — added `tailwindcss()` to plugins
+5. Replaced `index.css` with single Tailwind import
+6. Updated `main.jsx` — wrapped App in `<BrowserRouter>` for React Router
+7. Rewrote `App.jsx` — dark theme sidebar with NavLink navigation, Routes for 4 pages
+8. Created `pages/` directory
+9. Wrote `DataCatalog.jsx` — fetches `/api/datasets`, expandable rows show schema
+10. Wrote `LineageGraph.jsx` — fetches `/api/lineage`, converts to React Flow nodes/edges
+11. Wrote `PipelineHealth.jsx` — fetches 3 health endpoints, auto-refreshes every 30s
+12. Wrote `MLDashboard.jsx` — fetches experiments, displays Recharts loss curves and metric cards
+13. Removed default `App.css` (replaced by Tailwind)
+14. Started dev server: `npm run dev` — running on port 5173
+15. Verified all pages load, API data renders, CORS working
+16. All 7 Phase 7 verification checks passed
 
 ### Concepts & Definitions
-_To be written after phase completion_
+
+**React** — A JavaScript library for building user interfaces. Instead of writing plain HTML, you write **components** — reusable pieces of UI that manage their own state and render themselves. React updates the page efficiently by only re-rendering components whose data changed. Think of it like building with LEGO blocks — each block (component) is self-contained, and you snap them together to build the full page.
+
+**Vite** — A modern build tool for web projects. During development, it serves your code with instant hot-reload (change a file, see it update in the browser immediately). For production, it bundles everything into optimized files. Vite is much faster than older tools like Webpack because it uses native ES modules — the browser loads individual files instead of one giant bundle.
+
+**JSX** — A syntax that lets you write HTML-like code inside JavaScript. `<div className="text-white">Hello</div>` looks like HTML but is actually JavaScript that React compiles into DOM operations. It's the core of React — your UI is defined as functions that return JSX.
+
+**Component** — A reusable piece of UI in React. `DataCatalog`, `LineageGraph`, `PipelineHealth`, and `MLDashboard` are all components. Each is a function that returns JSX. Components can accept inputs (props) and manage internal state. They're like custom HTML elements you define yourself.
+
+**useState** — A React hook that adds state (memory) to a component. `const [tables, setTables] = useState([])` creates a variable `tables` (starts as empty array) and a function `setTables` to update it. When you call `setTables(newData)`, React re-renders the component with the new data. Without state, components would be static.
+
+**useEffect** — A React hook that runs side effects (like API calls) after a component renders. `useEffect(() => { fetchData() }, [])` means "run this function once, when the component first appears." The `[]` dependency array means "don't re-run unless these values change" — empty array = run once. This is where we load data from the FastAPI backend.
+
+**React Router** — A library for client-side navigation. When you click "ML Dashboard", React Router swaps the page component without reloading the entire page from the server. `<Route path="/ml" element={<MLDashboard />} />` says "when the URL is /ml, show the MLDashboard component." `<NavLink to="/ml">` creates a clickable link that updates the URL.
+
+**NavLink** — A React Router component that renders a link with awareness of whether it's currently active. The `className` function receives `{ isActive }` — we use this to highlight the current page in the sidebar (blue background for active, gray for inactive).
+
+**SPA (Single Page Application)** — A web app that loads one HTML page and dynamically updates it using JavaScript. Our portal is an SPA — the browser loads `index.html` once, then React handles all navigation and rendering. This makes the app feel fast because there's no full-page reload between pages.
+
+**Tailwind CSS** — A utility-first CSS framework. Instead of writing custom CSS classes like `.sidebar { width: 14rem; background: #1a1a2e; }`, you compose small utility classes directly: `className="w-56 bg-gray-900"`. Each class does one thing: `w-56` = width 14rem, `bg-gray-900` = dark gray background, `text-sm` = small text, `p-4` = padding 1rem. It's like building with LEGO instead of sculpting.
+
+**Axios** — A JavaScript HTTP client library. `axios.get('http://localhost:8000/api/datasets')` sends a GET request and returns a promise that resolves with the response data. We use it in `useEffect` to fetch data from our FastAPI backend. It automatically parses JSON responses.
+
+**React Flow (@xyflow/react)** — A React library for rendering interactive node-based graphs. We use it for the lineage diagram — each pipeline component is a "node" and each data flow is an "edge." React Flow handles zooming, panning, dragging, and click events out of the box. We convert our API's lineage data into React Flow's format (nodes with positions and styles, edges with source/target).
+
+**Recharts** — A React charting library built on D3. We use `<LineChart>` to display training loss curves — train loss and validation loss over epochs. `<ResponsiveContainer>` makes the chart resize with its parent. Recharts handles axes, tooltips, legends, and smooth line rendering.
+
+**Conditional Rendering** — Showing different UI based on state. `if (loading) return <div>Loading...</div>` shows a loading message while data is being fetched. `if (error) return <div>Error: {error}</div>` shows an error message if the API call failed. This ensures the user always sees something meaningful, never a blank page or crash.
 
 ### Architecture Notes
-_To be written after phase completion_
+
+Phase 7 completes the full stack — the user-facing portal that brings everything together:
+
+```
+Complete platform architecture:
+
+┌─────────────────────────────────────────────────────┐
+│  React Portal (Vite dev server, port 5173)           │
+│                                                      │
+│  ┌────────────┐ ┌────────────┐ ┌──────────────────┐ │
+│  │ DataCatalog│ │  Lineage   │ │ PipelineHealth   │ │
+│  │ (tables,   │ │  Graph     │ │ (Kafka, DAGs,    │ │
+│  │  schemas)  │ │ (ReactFlow)│ │  freshness)      │ │
+│  └─────┬──────┘ └─────┬──────┘ └────────┬─────────┘ │
+│        │               │                │            │
+│  ┌─────┴───────────────┴────────────────┴──────────┐ │
+│  │            MLDashboard                           │ │
+│  │  (experiments, loss curves, metrics)             │ │
+│  └──────────────────────┬──────────────────────────┘ │
+└─────────────────────────┼───────────────────────────┘
+                          │ axios HTTP requests
+                          ▼
+┌─────────────────────────────────────────────────────┐
+│  FastAPI Backend (port 8000)                         │
+│  /api/datasets  /api/lineage  /api/ml  /api/health  │
+└──────┬──────────────┬──────────────┬────────────────┘
+       │              │              │
+   ┌───┴───┐    ┌─────┴─────┐  ┌────┴────┐
+   │Iceberg│    │Experiment │  │  Kafka  │
+   │ meta  │    │   JSON    │  │  :9092  │
+   └───────┘    └───────────┘  └─────────┘
+```
+
+**Component tree:**
+```
+<BrowserRouter>
+  <App>
+    <nav>  (sidebar with NavLinks)
+    <main>
+      <Routes>
+        / → <DataCatalog />
+        /lineage → <LineageGraph />
+        /health → <PipelineHealth />
+        /ml → <MLDashboard />
+      </Routes>
+    </main>
+  </App>
+</BrowserRouter>
+```
+
+**Data flow per page:**
+- **DataCatalog** — `useEffect → axios.get /api/datasets → setTables → render table`. Click row → `axios.get /api/datasets/{name} → setDetail → expand row`.
+- **LineageGraph** — `useEffect → axios.get /api/lineage → convert to React Flow nodes/edges → render graph`.
+- **PipelineHealth** — `useEffect → Promise.all [/api/health/pipelines, /api/health/kafka, /api/health/storage] → render cards + tables`. Auto-refresh via `setInterval(fetchAll, 30000)`.
+- **MLDashboard** — `useEffect → axios.get /api/ml/experiments → render list`. Click experiment → `axios.get /api/ml/experiments/{id} → render loss curve + metrics`.
 
 ### Key Code Explained
-_To be written after phase completion_
+
+**Data fetching with useEffect + axios:**
+```jsx
+useEffect(() => {
+  axios.get(`${API}/datasets`)
+    .then(res => { setTables(res.data); setLoading(false) })
+    .catch(err => { setError(err.message); setLoading(false) })
+}, [])
+```
+- `useEffect(() => {...}, [])` — runs once when the component mounts (empty dependency array)
+- `axios.get(url)` — sends HTTP GET, returns a promise
+- `.then(res => setTables(res.data))` — on success, store the response data in state
+- `.catch(err => setError(err.message))` — on failure, store the error message
+- `setLoading(false)` — called in both paths so the loading spinner goes away
+
+**Conditional rendering — loading, error, and data states:**
+```jsx
+if (loading) return <div className="text-gray-400">Loading...</div>
+if (error) return <div className="text-red-400">Error: {error}</div>
+return <div>...actual content...</div>
+```
+- Three possible states: loading (show spinner), error (show message), success (show data)
+- Every page follows this pattern — the user never sees a blank page or cryptic error
+
+**React Flow — converting API data to graph:**
+```jsx
+function toFlowNodes(apiNodes) {
+  return apiNodes.map((node, i) => ({
+    id: node.id,
+    data: { label: <div>{node.label}</div> },
+    position: { x: (i % 4) * 250, y: Math.floor(i / 4) * 150 },
+    style: { background: typeColors[node.type], color: 'white' },
+  }))
+}
+```
+- React Flow needs nodes with `id`, `data.label`, `position`, and `style`
+- We auto-layout nodes in a grid: `(i % 4) * 250` = 4 columns, `Math.floor(i / 4) * 150` = rows
+- Color is determined by `typeColors[node.type]` — source=blue, processing=orange, etc.
+
+**Recharts — training loss curve:**
+```jsx
+<LineChart data={lossChartData}>
+  <XAxis dataKey="epoch" />
+  <YAxis />
+  <Line dataKey="train" stroke="#3b82f6" name="Train Loss" />
+  <Line dataKey="validation" stroke="#f97316" name="Val Loss" />
+</LineChart>
+```
+- `data` — array of `{epoch, train, validation}` objects
+- `<XAxis dataKey="epoch">` — use epoch number as x-axis
+- Each `<Line>` plots one series from the data
+- `stroke` sets the line color, `name` appears in the legend
+
+**Auto-refresh with setInterval:**
+```jsx
+useEffect(() => {
+  fetchAll()
+  const interval = setInterval(fetchAll, 30000)
+  return () => clearInterval(interval)
+}, [])
+```
+- `setInterval(fetchAll, 30000)` — call fetchAll every 30 seconds
+- `return () => clearInterval(interval)` — cleanup: stop the interval when the component unmounts (prevents memory leaks)
 
 ### What Could Go Wrong
-_To be written after phase completion_
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| CORS error in browser console | FastAPI not running or wrong origin | Start FastAPI: `uvicorn backend.main:app --port 8000`. Check `allow_origins` includes `http://localhost:5173` |
+| Blank page, no errors | JavaScript crash in a component | Open browser DevTools (F12) → Console tab for errors |
+| API data not showing | FastAPI not running on :8000 | `curl http://localhost:8000/health` to verify. Start if needed. |
+| React Flow graph is empty | Lineage API returned empty nodes | Check `curl http://localhost:8000/api/lineage` |
+| Recharts shows no chart | Experiment has no loss data | Run `python ml/train.py` to generate an experiment with losses |
+| `npm run dev` fails | Missing dependencies | Run `npm install` in the `portal/` directory |
+| Tailwind classes not applying | Tailwind plugin not configured | Ensure `vite.config.js` has `tailwindcss()` in plugins |
+| Port 5173 already in use | Another Vite instance running | `lsof -i :5173` → `kill <PID>` |
+| Page shows "Loading..." forever | API request pending or failed | Open DevTools → Network tab to see if request is pending, failed, or blocked by CORS |
 
 ### What I Should Be Able to Explain
-_To be written after phase completion_
+
+- [ ] What React is and how components work (functions that return JSX)
+- [ ] What useState does and why components need state
+- [ ] What useEffect does and why API calls go inside it (not at the top of the function)
+- [ ] What React Router does and why SPAs don't reload the full page
+- [ ] What Tailwind CSS is and how utility classes differ from traditional CSS
+- [ ] What axios does and how it fetches data from the API
+- [ ] What React Flow does and how we convert lineage data to nodes + edges
+- [ ] What Recharts does and how it renders the training loss curve
+- [ ] Why every page needs loading and error states
+- [ ] What CORS is and why the browser blocks requests between different ports
 
 ---
 
 ## Full System Glossary
 
-> 📝 This section is built up progressively. Each phase adds its terms here so you have one master reference.
-
 | Term | Definition | Where It's Used |
 | ---- | ---------- | --------------- |
-| _To be populated phase by phase_ | | |
+| Kafka | Distributed event streaming platform — our "message post office" | Phase 2: ingestion |
+| Topic | Named channel in Kafka where messages are stored | Phase 2: `telemetry.raw` |
+| Producer | Program that sends messages to a Kafka topic | Phase 2: `fake_producer.py` |
+| Consumer | Program that reads messages from a Kafka topic | Phase 2: `test_consumer.py` |
+| Offset | Sequential number tracking position in a Kafka topic | Phase 2: consumer bookmarks |
+| KRaft | Kafka's built-in consensus protocol (replaced ZooKeeper) | Phase 2: docker-compose |
+| Avro Schema | JSON contract defining message structure | Phase 2: `telemetry.avsc` |
+| Spark | Distributed computation engine for parallel data processing | Phase 3: processing |
+| PySpark | Python API for Apache Spark | Phase 3: all Spark jobs |
+| Structured Streaming | Spark's continuous processing mode (micro-batches) | Phase 3: `stream_processor.py` |
+| Iceberg | Table format adding transactions, snapshots, schema enforcement to files | Phase 3: storage |
+| Snapshot | Point-in-time version of an Iceberg table | Phase 3: time-travel queries |
+| Parquet | Columnar file format optimized for analytics | Phase 3: Iceberg data files |
+| MinIO | Local S3-compatible object storage | Phase 3: data lake |
+| Dead Letter | Pattern: route invalid data to separate table with rejection reasons | Phase 3: `dead_letter` table |
+| Checkpoint | Saved streaming progress for exactly-once processing | Phase 3: `checkpoints/` |
+| ETL | Extract, Transform, Load — data pipeline pattern | Phase 3: batch + streaming |
+| Airflow | Workflow orchestration platform with web UI | Phase 4: scheduling |
+| DAG | Directed Acyclic Graph — workflow of tasks with dependencies | Phase 4: pipeline/ML DAGs |
+| Operator | Airflow task template (PythonOperator, BranchPythonOperator) | Phase 4: DAG tasks |
+| XCom | Airflow cross-task communication mechanism | Phase 4: passing data between tasks |
+| Quality Gate | Pipeline checkpoint that halts on data quality failure | Phase 4: BranchPythonOperator |
+| Autoencoder | Neural network that compresses and reconstructs data | Phase 5: anomaly detection |
+| Bottleneck | Narrowest layer forcing compression of essential patterns | Phase 5: 16-dim latent space |
+| Reconstruction Error | Difference between autoencoder input and output (MSE) | Phase 5: anomaly scoring |
+| MPS | Apple Metal Performance Shaders — GPU acceleration for PyTorch | Phase 5: training |
+| Early Stopping | Stop training when validation loss plateaus | Phase 5: prevent overfitting |
+| F1 Score | Harmonic mean of precision and recall | Phase 5: evaluation |
+| FastAPI | Python REST API framework | Phase 6: backend |
+| CORS | Cross-Origin Resource Sharing — browser security for cross-port requests | Phase 6: middleware |
+| Pydantic | Python data validation library for typed API responses | Phase 6: response models |
+| React | JavaScript library for building component-based UIs | Phase 7: portal |
+| Vite | Fast build tool with hot-reload for development | Phase 7: dev server |
+| Tailwind CSS | Utility-first CSS framework | Phase 7: styling |
+| React Flow | Library for interactive node-based graph diagrams | Phase 7: lineage graph |
+| Recharts | React charting library for data visualization | Phase 7: loss curves |
 
 ---
 
 ## How Everything Connects
 
-> 📝 After all 7 phases, Claude will write a final synthesis section here that maps every file to every other file, every data flow, and every dependency — the complete mental model of the entire platform.
+### The Complete Data Flow
 
-_To be written after all phases are complete_
+```
+1. GENERATE     fake_producer.py creates telemetry events (50 devices, 5 metrics, 5% anomalies)
+       │
+       ▼
+2. STREAM       Kafka topic 'telemetry.raw' stores events durably
+       │
+       ▼
+3. VALIDATE     stream_processor.py (Spark) reads Kafka, applies 4 validation rules
+       │
+       ├── Valid events → Iceberg 'clean_events' table (MinIO storage)
+       └── Invalid events → Iceberg 'dead_letter' table (with rejection reasons)
+       │
+       ▼
+4. AGGREGATE    batch_etl.py (Spark) computes hourly stats per device per metric
+       │         → Iceberg 'hourly_aggregates' table
+       │
+       ▼
+5. CHECK        quality_checks.py verifies data health (row count, nulls, ranges, duplicates)
+       │
+       ▼
+6. ORCHESTRATE  Airflow DAGs schedule and monitor steps 3-5 automatically
+       │         telemetry_pipeline: every 15 min, with quality gate branching
+       │         ml_training_pipeline: daily, chains train → evaluate → register
+       │
+       ▼
+7. TRAIN        ml/train.py loads data from Iceberg snapshot → PyTorch autoencoder on MPS GPU
+       │         ml/evaluate.py computes reconstruction errors → anomaly detection
+       │         Results saved to experiments/{id}/experiment.json + evaluation.json + model.pt
+       │
+       ▼
+8. SERVE        FastAPI backend reads Iceberg metadata, experiment files, checks Kafka health
+       │         11 REST endpoints serving JSON to the frontend
+       │
+       ▼
+9. DISPLAY      React portal renders 4 pages from API data
+                DataCatalog | LineageGraph | PipelineHealth | MLDashboard
+```
+
+### File Map — Every File and Its Purpose
+
+```
+TAID/
+├── CLAUDE.md                              # Master blueprint and build instructions
+├── EXPLANATION.md                         # This file — complete knowledge base
+├── docker-compose.yml                     # Kafka + MinIO + Airflow containers
+├── .gitignore                             # Excludes venv, caches, node_modules, etc.
+│
+├── ingestion/
+│   ├── fake_producer.py                   # Generates fake telemetry → Kafka
+│   ├── test_consumer.py                   # Verifies messages arrive in Kafka
+│   └── schemas/
+│       └── telemetry.avsc                 # Avro schema (event structure contract)
+│
+├── storage/
+│   └── catalog.py                         # SparkSession factory with Iceberg + MinIO config
+│
+├── processing/
+│   ├── stream_processor.py                # Kafka → validate → clean_events + dead_letter
+│   ├── batch_etl.py                       # clean_events → hourly_aggregates
+│   └── quality_checks.py                  # 4 SQL-based data health checks
+│
+├── infra/airflow/dags/
+│   ├── telemetry_pipeline_dag.py          # Main pipeline DAG (every 15 min)
+│   └── ml_training_dag.py                 # ML training DAG (daily)
+│
+├── ml/
+│   ├── dataset.py                         # Iceberg → pivot → normalize → DataLoaders
+│   ├── model.py                           # PyTorch autoencoder (5→64→32→16→32→64→5)
+│   ├── train.py                           # Training loop with MPS + early stopping
+│   ├── evaluate.py                        # Reconstruction error → anomaly detection
+│   └── experiments/                       # Saved models, logs, evaluation reports
+│
+├── backend/
+│   ├── main.py                            # FastAPI app with CORS + router mounting
+│   └── routers/
+│       ├── datasets.py                    # /api/datasets — table metadata + schemas
+│       ├── lineage.py                     # /api/lineage — pipeline graph (nodes + edges)
+│       ├── ml_results.py                  # /api/ml — experiment results from JSON
+│       └── health.py                      # /api/health — Kafka, pipelines, storage
+│
+└── portal/
+    ├── package.json                       # Node.js dependencies
+    ├── vite.config.js                     # Vite + React + Tailwind config
+    └── src/
+        ├── main.jsx                       # Entry point with BrowserRouter
+        ├── index.css                      # Tailwind import
+        ├── App.jsx                        # Layout: sidebar nav + Routes
+        └── pages/
+            ├── DataCatalog.jsx            # Table listing with expandable schemas
+            ├── LineageGraph.jsx           # React Flow interactive pipeline graph
+            ├── PipelineHealth.jsx         # Kafka + DAG + freshness dashboard
+            └── MLDashboard.jsx            # Experiments, loss curves, metrics
+```
+
+### Service Port Map
+
+| Service | Port | How to Access |
+|---------|------|---------------|
+| Kafka | 9092 | `localhost:9092` (Python scripts) |
+| MinIO API | 9000 | `http://localhost:9000` (Spark/Iceberg) |
+| MinIO Console | 9001 | `http://localhost:9001` (browser, minioadmin/minioadmin) |
+| Airflow | 8080 | `http://localhost:8080` (browser, admin/admin) |
+| FastAPI | 8000 | `http://localhost:8000/docs` (browser) |
+| React Portal | 5173 | `http://localhost:5173` (browser) |
