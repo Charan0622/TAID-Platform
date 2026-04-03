@@ -1,0 +1,47 @@
+{
+  "type": "record",
+  "name": "TelemetryEvent",
+  "namespace": "com.telemetry.events",
+  "doc": "Schema for a single telemetry event from a device sensor. Every event represents one metric reading at one point in time from one device.",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": "string",
+      "doc": "Unique identifier for this event (UUID). Used to detect duplicates."
+    },
+    {
+      "name": "timestamp",
+      "type": "string",
+      "doc": "ISO 8601 datetime when the reading was taken (e.g., 2026-04-02T14:30:00Z)."
+    },
+    {
+      "name": "device_id",
+      "type": "string",
+      "doc": "Identifier of the device that produced this reading (e.g., device_042)."
+    },
+    {
+      "name": "metric_name",
+      "type": {
+        "type": "enum",
+        "name": "MetricName",
+        "symbols": ["cpu_usage", "memory_usage", "temperature", "disk_io", "network_latency"]
+      },
+      "doc": "Which metric is being reported. One of five allowed sensor types."
+    },
+    {
+      "name": "value",
+      "type": ["null", "double"],
+      "doc": "The measured value. Nullable to represent sensor failures or missing reads."
+    },
+    {
+      "name": "unit",
+      "type": "string",
+      "doc": "Unit of measurement (percent, celsius, mbps, ms)."
+    },
+    {
+      "name": "location",
+      "type": "string",
+      "doc": "Physical or logical location of the device (e.g., us-east-1, building-a-floor-3)."
+    }
+  ]
+}

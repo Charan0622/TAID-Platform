@@ -208,29 +208,166 @@ print(torch.backends.mps.is_available())  # True = GPU ready
 
 ## Phase 2 — Kafka + Data Ingestion
 
-> ⏳ **Status:** Not started
-> 📝 Claude will fill this section after completing Phase 2
+> ✅ **Status:** Complete
 
 ### What Was Done
-_To be written after phase completion_
+
+1. **`docker-compose.yml`** — Created with Kafka service definition (Apache Kafka 3.9.0, KRaft mode, ARM64). This is the master file that will grow to include all our containerized services.
+2. **`ingestion/schemas/telemetry.avsc`** — Avro schema defining the exact structure of a telemetry event: event_id, timestamp, device_id, metric_name (enum of 5 types), value (nullable double), unit, and location.
+3. **`ingestion/fake_producer.py`** — Python script that generates fake telemetry events from 50 simulated devices and sends them to Kafka topic `telemetry.raw` every 0.5 seconds. Injects ~5% anomalous events (null values, extreme readings, future timestamps, negative values, unknown metrics).
+4. **`ingestion/test_consumer.py`** — Test script that reads events back from Kafka to verify the pipeline works. Reads from the beginning of the topic and identifies anomalous events.
 
 ### Step-by-Step Changes
-_To be written after phase completion_
+
+1. Created `docker-compose.yml` with Kafka service — initially tried `bitnami/kafka:3.7` image
+2. Attempted to start Kafka — failed because Bitnami images are no longer available on Docker Hub
+3. Investigated alternatives — found that `apache/kafka:3.9.0` is the official replacement with ARM64 support
+4. Rewrote `docker-compose.yml` with `apache/kafka:3.9.0` — different env var format (`KAFKA_` prefix instead of Bitnami's `KAFKA_CFG_`), added `CLUSTER_ID` (required for KRaft), configured dual listeners (internal on 29092 for future inter-container traffic, external on 9092 for localhost)
+5. Ran `docker compose up kafka -d` — image pulled (~200MB), container started successfully
+6. Verified Kafka health: container running, using 364MB of 1GB limit
+7. Created directory structure: `mkdir -p ingestion/schemas`
+8. Wrote `ingestion/schemas/telemetry.avsc` — Avro schema with 7 fields
+9. Wrote `ingestion/fake_producer.py` — producer with 50 devices, 5 metric types, 10 locations, 5 anomaly modes
+10. Tested producer — ran for 8 seconds, sent 15 events successfully
+11. Wrote `ingestion/test_consumer.py` — consumer that reads from topic beginning
+12. Tested consumer — read back all 15 events from Kafka, confirming durable storage
+13. Ran extended test (30 events) — confirmed anomaly injection works (negative value detected)
+14. All 4 Phase 2 verification checks passed
 
 ### Concepts & Definitions
-_To be written after phase completion_
+
+**Apache Kafka** — A distributed event streaming platform. Think of it like a **post office with perfect memory**. Producers drop messages into named mailboxes called "topics." Consumers read from those mailboxes. Unlike a regular queue, messages don't disappear after being read — they stick around, so multiple consumers can read the same messages independently, and you can replay old messages. In our project, Kafka is the entry point: all telemetry data flows through it before anything else touches it. Why not just write directly to a database? Because Kafka decouples producers from consumers — the producer doesn't need to know or care who reads the data, and consumers can be added/removed without affecting producers.
+
+**Topic** — A named channel in Kafka where messages are stored. Think of it like a TV channel — producers broadcast to it, consumers tune in. Our topic is `telemetry.raw` — the word "raw" signals this is unprocessed data straight from sensors. Topics are durable (messages persist on disk) and can be partitioned across multiple servers for parallelism (though we only use 1 partition locally).
+
+**Producer** — A program that sends messages to a Kafka topic. Our `fake_producer.py` is a producer. In a real system, producers would be agents running on actual servers, sending real CPU/memory/temperature readings. The producer doesn't wait for consumers — it's "fire and forget."
+
+**Consumer** — A program that reads messages from a Kafka topic. Our `test_consumer.py` is a consumer. Consumers track their position in the topic using an **offset** (a number like "I've read up to message 42"). This means consumers can stop and restart without missing messages.
+
+**Offset** — A sequential number assigned to each message in a topic. Message 0, message 1, message 2, etc. Consumers use offsets as bookmarks. `auto_offset_reset='earliest'` means "start from offset 0" (the very first message). `'latest'` would mean "only read new messages from now on."
+
+**KRaft (Kafka Raft)** — Kafka's built-in consensus protocol that replaced ZooKeeper. Older Kafka needed a separate ZooKeeper service to coordinate which broker is the leader, track topic metadata, etc. KRaft does all of this inside Kafka itself — one less container to run, one less thing to break. "Raft" refers to the Raft consensus algorithm, which is how multiple nodes agree on who's in charge.
+
+**CLUSTER_ID** — A unique identifier for a Kafka cluster in KRaft mode. It's just a 22-character base64 string. Every node in the cluster must share the same CLUSTER_ID. For our single-node dev setup, any valid string works.
+
+**Listeners and Advertised Listeners** — Kafka has a two-step connection process. First, a client connects to any broker. The broker responds with the "advertised listener" addresses — the real addresses clients should use for ongoing communication. We configure two listeners: `PLAINTEXT_HOST` on port 9092 (for Python scripts on localhost) and `PLAINTEXT` on port 29092 (for future Docker containers that talk to Kafka by container name).
+
+**Avro Schema** — A data format specification that defines the exact structure of a message: field names, types, defaults, and documentation. Think of it as a **contract between producer and consumer** — "every telemetry event WILL have these 7 fields in these exact types." Without a schema, producers might silently change the data format and break downstream consumers. Avro supports schema evolution (adding/removing fields safely), which is why it's popular in data pipelines.
+
+**Serialization / Deserialization** — Converting data between formats. Our producer **serializes** Python dicts into JSON bytes before sending to Kafka (because Kafka only transports raw bytes). Our consumer **deserializes** those bytes back into Python dicts. The `value_serializer` and `value_deserializer` parameters in kafka-python handle this automatically.
+
+**Docker Compose `mem_limit`** — A hard cap on how much RAM a container can use. We set Kafka to `1g` (1 gigabyte). If Kafka tries to use more, Docker kills it. This protects our 16GB laptop from a single runaway container eating all the RAM.
+
+**`platform: linux/arm64`** — Tells Docker to pull the ARM64 version of the image, not x86_64. Required on Apple Silicon Macs. Without this, Docker might pull an x86 image and emulate it with Rosetta, which is slower and uses more memory.
 
 ### Architecture Notes
-_To be written after phase completion_
+
+Kafka is the **first component in our data pipeline** — the front door where all data enters:
+
+```
+Phase 2 architecture:
+
+fake_producer.py (Python on localhost)
+    │
+    │ sends JSON events every 0.5s
+    │ via kafka-python library
+    │
+    ▼
+┌─────────────────────────────┐
+│  Kafka (Docker container)    │
+│  Topic: telemetry.raw        │
+│  Port: 9092 (localhost)      │
+│  Port: 29092 (Docker net)    │
+│  Memory: ≤1GB               │
+└─────────────────────────────┘
+    │
+    │ reads events back
+    │
+    ▼
+test_consumer.py (Python on localhost)
+```
+
+In later phases, this grows:
+- **Phase 3:** Spark replaces test_consumer — reads from Kafka, validates, writes to Iceberg
+- **Phase 4:** Airflow orchestrates when Spark runs
+- **Phase 5:** PyTorch reads from Iceberg tables (not directly from Kafka)
+
+The Avro schema (`telemetry.avsc`) isn't enforced by Kafka itself — it's documentation and a reference for code that serializes/deserializes events. In production systems, you'd use a Schema Registry to enforce schemas at the broker level.
 
 ### Key Code Explained
-_To be written after phase completion_
+
+**Producer — connecting to Kafka and serializing data:**
+```python
+producer = KafkaProducer(
+    bootstrap_servers=KAFKA_BROKER,
+    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+)
+```
+- `bootstrap_servers` — the address of at least one Kafka broker. The client connects here first, then discovers the full cluster topology. For us it's just `localhost:9092`.
+- `value_serializer` — a function that converts each message value before sending. `json.dumps(v)` turns a Python dict into a JSON string, `.encode("utf-8")` turns that string into bytes. Kafka only transports bytes.
+
+**Producer — sending a message:**
+```python
+producer.send(TOPIC, value=event)
+```
+- `.send()` is **non-blocking** — it queues the message in an internal buffer and returns immediately. Kafka batches messages for efficiency.
+- `producer.flush()` at the end forces all buffered messages to be sent before the program exits.
+
+**Anomaly injection — corrupting data intentionally:**
+```python
+if random.random() < ANOMALY_RATE:  # 5% chance
+    event = create_anomalous_event()
+```
+- `random.random()` returns a float between 0 and 1. If it's less than 0.05 (5%), we generate a bad event.
+- Five anomaly types mirror real-world data quality issues: sensor failures (null), glitches (extreme values), clock drift (future timestamps), hardware errors (negative values), and misconfiguration (unknown metrics).
+
+**Consumer — reading from the beginning:**
+```python
+consumer = KafkaConsumer(
+    TOPIC,
+    auto_offset_reset="earliest",
+    consumer_timeout_ms=10000,
+    value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+)
+```
+- `auto_offset_reset="earliest"` — if this consumer has never read from this topic before, start from the very first message. Without this, it would default to `latest` and only see new messages.
+- `consumer_timeout_ms=10000` — if no new messages arrive within 10 seconds, stop iterating. This prevents the consumer from hanging forever.
+- `value_deserializer` — the reverse of the producer's serializer: bytes → JSON string → Python dict.
+
+**Docker Compose — dual Kafka listeners:**
+```yaml
+KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092
+KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+```
+- Three listeners, each for a different purpose:
+  - `PLAINTEXT_HOST` on 9092 — for our Python scripts running on the Mac (advertised as `localhost:9092`)
+  - `PLAINTEXT` on 29092 — for future Docker containers like Spark (advertised as `kafka:29092` — the container hostname)
+  - `CONTROLLER` on 9093 — for Kafka's internal KRaft coordination (not advertised to clients)
 
 ### What Could Go Wrong
-_To be written after phase completion_
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| `bitnami/kafka:3.7` image not found | Bitnami pulled their images from Docker Hub | Use `apache/kafka:3.9.0` instead (the official Apache image) |
+| `kafka-python` can't connect to Kafka | Kafka takes ~10-15 seconds to fully start | Wait 15 seconds after `docker compose up`, or add retry logic |
+| Port 9092 already in use | Another service (or old Kafka) is using it | `lsof -i :9092` to find what's using it, then stop it |
+| Consumer reads 0 messages | Topic doesn't exist yet (no messages sent) | Run the producer first, then the consumer |
+| Consumer hangs forever | `consumer_timeout_ms` not set | Add `consumer_timeout_ms=10000` to stop after 10s of silence |
+| Events are garbled/corrupted | Serializer/deserializer mismatch | Ensure producer uses `json.dumps().encode()` and consumer uses `json.loads(.decode())` |
+| Docker container uses too much memory | No `mem_limit` set | Always set `mem_limit` in docker-compose.yml |
+| Kafka container restarts in a loop | Bad CLUSTER_ID or missing env vars | Check `docker compose logs kafka` for the exact error |
 
 ### What I Should Be Able to Explain
-_To be written after phase completion_
+
+- [ ] What Kafka is and why we use it instead of writing directly to a database
+- [ ] What a topic is and how it relates to producers and consumers
+- [ ] What an offset is and why `auto_offset_reset='earliest'` matters
+- [ ] What KRaft is and why it replaced ZooKeeper
+- [ ] What serialization means and why Kafka requires it
+- [ ] Why we have two listeners (9092 for localhost, 29092 for Docker containers)
+- [ ] What an Avro schema is and why data contracts matter in pipelines
+- [ ] Why we inject anomalous data on purpose (to test validation in Phase 3)
+- [ ] What `mem_limit` does and why it's critical on a 16GB laptop
 
 ---
 

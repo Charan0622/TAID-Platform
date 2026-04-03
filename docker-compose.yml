@@ -1,0 +1,50 @@
+# docker-compose.yml — Defines all containerized services for the platform.
+# Phase 2 starts with just Kafka. We'll add MinIO, Airflow, etc. in later phases.
+#
+# Usage:
+#   docker compose up kafka -d     ← start Kafka in the background
+#   docker compose logs kafka -f   ← watch Kafka's logs in real-time
+#   docker compose down            ← stop everything
+
+services:
+  kafka:
+    # Official Apache Kafka image — ARM64 compatible, includes KRaft mode
+    # so we don't need a separate ZooKeeper container (saves ~500MB RAM)
+    image: apache/kafka:3.9.0
+    platform: linux/arm64            # REQUIRED: we're on Apple Silicon M4
+    container_name: kafka
+    ports:
+      - "9092:9092"                  # Expose Kafka's broker port to localhost
+    environment:
+      # --- KRaft mode configuration (no ZooKeeper needed) ---
+      # CLUSTER_ID: a unique ID for this Kafka cluster (required for KRaft mode)
+      # Any 22-character base64 string works — this is just a dev cluster
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      # Node ID: unique identifier for this broker (we only have one)
+      KAFKA_NODE_ID: 0
+      # This single node acts as BOTH broker (handles messages) AND controller (manages cluster)
+      KAFKA_PROCESS_ROLES: broker,controller
+      # LISTENERS: the network interfaces Kafka listens on
+      #   PLAINTEXT://:29092  — internal listener (for inter-container traffic in later phases)
+      #   CONTROLLER://:9093  — for internal cluster coordination (KRaft protocol)
+      #   PLAINTEXT_HOST://:9092 — external listener (for our Python code on localhost)
+      KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092
+      # ADVERTISED_LISTENERS: the addresses Kafka tells clients to connect to
+      #   kafka:29092   — other Docker containers use the container hostname
+      #   localhost:9092 — our Python scripts connect via localhost
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      # Map each listener name to a security protocol (all plaintext for local dev)
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      # Which listener to use for broker-to-broker communication
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Which node votes in the KRaft quorum — just node 0 (us) on port 9093
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      # Tell Kafka which listener name is for controller traffic
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # Auto-create topics when a producer first sends to them
+      # (convenient for dev — in production you'd create topics explicitly)
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    # Hard cap at 1GB RAM — Kafka is efficient but can grow if unchecked
+    mem_limit: 1g
+    # Restart automatically if it crashes (but not if we manually stop it)
+    restart: unless-stopped
