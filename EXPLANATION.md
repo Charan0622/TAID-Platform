@@ -629,29 +629,221 @@ SUM(CASE WHEN event_id IS NULL THEN 1 ELSE 0 END) as null_event_id
 
 ## Phase 4 — Airflow Orchestration
 
-> ⏳ **Status:** Not started
-> 📝 Claude will fill this section after completing Phase 4
+> ✅ **Status:** Complete
 
 ### What Was Done
-_To be written after phase completion_
+
+1. **`docker-compose.yml` (updated)** — Added Airflow service: `apache/airflow:2.9.3-python3.11`, ARM64, port 8080, SQLite backend, SequentialExecutor, 1.5GB memory limit. Command initializes the DB, creates admin user, starts both scheduler and webserver.
+2. **`infra/airflow/dags/telemetry_pipeline_dag.py`** — Main pipeline DAG with 8 tasks: check Kafka lag → run stream processor → run quality checks → quality gate (branch) → batch aggregation → update metadata → notify success. Failure path: quality gate → alert. Scheduled every 15 minutes.
+3. **`infra/airflow/dags/ml_training_dag.py`** — ML training DAG with 6 tasks: snapshot dataset → prepare training data → train model → evaluate → register model → generate report. Scheduled daily. Tasks are placeholders — actual ML code comes in Phase 5.
+4. **Installed `kafka-python`** inside the Airflow container so the Kafka health check task works.
 
 ### Step-by-Step Changes
-_To be written after phase completion_
+
+1. Added Airflow service to `docker-compose.yml` — SQLite backend (no Postgres needed), SequentialExecutor, DAGs mounted from `./infra/airflow/dags`
+2. Created `infra/airflow/dags/` directory
+3. Started Airflow: `docker compose up airflow -d` — pulled image (~700MB), container started
+4. Waited 30 seconds for DB initialization and admin user creation
+5. Verified web UI: `curl http://localhost:8080/health` → HTTP 200
+6. Checked resource usage: Airflow using 948MB of 1.5GB limit. Total Docker: ~1.6GB
+7. Wrote `telemetry_pipeline_dag.py` — 8 tasks with BranchPythonOperator for quality gate
+8. Verified DAG parses: `docker exec airflow python -c "from airflow.models import DagBag; ..."` — 8 tasks, no errors
+9. Installed `kafka-python` in container: `docker exec --user root airflow bash -c "python -m pip install kafka-python"`
+10. Unpaused and triggered: `airflow dags unpause telemetry_pipeline && airflow dags trigger telemetry_pipeline`
+11. Verified run: all 7 happy-path tasks succeeded, `alert_quality_failure` correctly skipped
+12. Wrote `ml_training_dag.py` — 6 tasks in linear chain, XCom passing between tasks
+13. Verified ML DAG parses: 6 tasks, no errors
+14. Triggered ML DAG: all 6 tasks succeeded
+15. Verified task logs show meaningful output (PIPELINE COMPLETE, etc.)
+16. All 6 Phase 4 verification checks passed
 
 ### Concepts & Definitions
-_To be written after phase completion_
+
+**Apache Airflow** — A workflow orchestration platform. You define workflows as Python code (DAGs), and Airflow handles scheduling, running, retrying, and monitoring them. Think of it as a **robot manager**: instead of you manually running scripts at 3am, Airflow does it on schedule, handles failures gracefully, and shows you a dashboard of what's happening. You open the web UI at http://localhost:8080 (login: admin/admin) to see all your pipelines.
+
+**DAG (Directed Acyclic Graph)** — A workflow definition in Airflow. "Directed" = tasks flow in one direction (A → B → C, never backwards). "Acyclic" = no loops (C can't trigger A again — that would create an infinite cycle). "Graph" = a network of connected nodes. Each node is a task, each edge is a dependency. Our telemetry pipeline DAG has 8 nodes connected in a chain with one branch.
+
+**Task** — A single unit of work in a DAG. Each task does one thing: check Kafka, run quality checks, send an alert, etc. Tasks are defined using Operators (see below). Airflow tracks each task's state: `pending`, `running`, `success`, `failed`, `skipped`.
+
+**Operator** — A template for creating a task. Airflow provides many operator types:
+- `PythonOperator` — runs a Python function
+- `BashOperator` — runs a shell command
+- `BranchPythonOperator` — runs a Python function that returns the task_id of the next task to execute (used for if/else logic in workflows)
+We used `PythonOperator` for most tasks and `BranchPythonOperator` for the quality gate.
+
+**BranchPythonOperator** — A special operator that enables decision-making in a DAG. Its Python function must return the `task_id` of the next task to run. All other downstream branches are automatically **skipped**. In our quality gate: if checks pass, return `"run_batch_aggregation"` (happy path); if they fail, return `"alert_quality_failure"` (failure path).
+
+**XCom (Cross-Communication)** — Airflow's mechanism for passing small pieces of data between tasks. One task "pushes" data: `context["ti"].xcom_push(key="snapshot_id", value="abc123")`. A downstream task "pulls" it: `context["ti"].xcom_pull(task_ids="snapshot_dataset", key="snapshot_id")`. XCom is for metadata (IDs, status, small results) — NOT for large datasets. Think of it like sticky notes between coworkers: "Here's the snapshot ID you need."
+
+**SequentialExecutor** — Airflow's simplest executor: runs one task at a time, in order. Perfect for a laptop where we don't want multiple Spark jobs competing for RAM. Production systems use CeleryExecutor (distributed across multiple workers) or KubernetesExecutor (one pod per task). The executor is configured via `AIRFLOW__CORE__EXECUTOR` environment variable.
+
+**Scheduling and `schedule_interval`** — How often Airflow runs a DAG. `timedelta(minutes=15)` means every 15 minutes. `"@daily"` means once per day at midnight. `None` means manual-only. Airflow creates a "DAG run" for each scheduled interval. You can also trigger runs manually from the UI or CLI.
+
+**`catchup`** — When set to `False`, Airflow doesn't create runs for intervals that already passed. Without this, if you define a DAG with `start_date=2026-04-01` and first enable it on April 3rd, Airflow would try to run all the missed intervals (April 1st, 2nd, etc.). `catchup=False` says "just start from now."
+
+**`start_date`** — The earliest date Airflow will schedule a run. It does NOT mean "start running now." If `start_date=April 1` and `schedule_interval=daily`, the first run covers April 1-2 and actually executes on April 2. This confuses everyone at first — just remember: the run for interval X executes AFTER interval X ends.
+
+**Idempotency** — A task is idempotent if running it multiple times produces the same result as running it once. This is critical because Airflow retries failed tasks. If a task writes 100 rows and then fails on step 2, retrying shouldn't write another 100 rows (200 total). Our tasks use `IF NOT EXISTS` for table creation and `APPEND` for writes — safe to retry.
+
+**`trigger_rule`** — Controls when a task runs relative to its upstream tasks. Default is `all_success` (all parents must succeed). We use `none_failed` on `notify_success` because the BranchPythonOperator skips some upstream tasks — `all_success` would prevent it from running since skipped != success.
+
+**`default_args`** — A dictionary of settings applied to every task in a DAG unless overridden. Includes owner (for filtering), retries (how many times to retry on failure), retry_delay (wait between retries), etc. Saves you from repeating the same config on every task.
+
+**Quality Gate** — A task in a pipeline that decides whether to proceed or halt based on data quality. Our `quality_gate` task pulls results from `run_quality_checks` and branches: pass → continue processing, fail → send alert and stop. This prevents bad data from flowing downstream into ML training or dashboards. It's the "taste test before serving."
+
+**`host.docker.internal`** — A special DNS name that Docker provides to containers, pointing to the host machine's network. When Airflow (inside Docker) needs to connect to Kafka (also in Docker but exposed on localhost:9092), it uses `host.docker.internal:9092` instead of `localhost` (which inside a container refers to the container itself).
 
 ### Architecture Notes
-_To be written after phase completion_
+
+Phase 4 adds the orchestration layer that ties all previous phases together:
+
+```
+Phase 4 architecture — Airflow as the central coordinator:
+
+┌─────────────────────────────────────────────────────────────┐
+│                    AIRFLOW (Docker, port 8080)               │
+│                                                              │
+│  telemetry_pipeline (every 15 min):                         │
+│    check_kafka_lag                                           │
+│         │                                                    │
+│    run_stream_processor  ←── triggers Spark on host          │
+│         │                                                    │
+│    run_quality_checks                                        │
+│         │                                                    │
+│    quality_gate ─── PASS ──→ run_batch_aggregation           │
+│         │                         │                          │
+│         └── FAIL ──→ alert       update_metadata             │
+│                                   │                          │
+│                              notify_success                  │
+│                                                              │
+│  ml_training_pipeline (daily):                              │
+│    snapshot → prepare → train → evaluate → register → report │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+         │              │              │
+         ▼              ▼              ▼
+    ┌─────────┐   ┌──────────┐   ┌──────────┐
+    │  Kafka  │   │  Spark   │   │  MinIO   │
+    │ (Docker)│   │ (Native) │   │ (Docker) │
+    └─────────┘   └──────────┘   └──────────┘
+```
+
+**Key architectural decisions:**
+- Airflow runs inside Docker with a mounted DAGs volume — edit DAG files on your Mac, Airflow picks them up automatically (every 30 seconds via `DAG_DIR_LIST_INTERVAL`).
+- Spark jobs run **natively on the host**, not inside the Airflow container. The DAG tasks simulate triggering them. In production, you'd use `BashOperator` with `spark-submit` or `SSHOperator`.
+- SQLite backend — single file, no separate Postgres container. Fine for single-user local dev.
+- SequentialExecutor — one task at a time. Prevents multiple Spark jobs from competing for our limited RAM.
+
+**Service resource summary after Phase 4:**
+
+| Service | Container | RAM Usage | RAM Limit |
+|---------|-----------|-----------|-----------|
+| Kafka   | kafka     | ~558MB    | 1GB       |
+| MinIO   | minio     | ~112MB    | 512MB     |
+| Airflow | airflow   | ~948MB    | 1.5GB     |
+| **Total Docker** | | **~1.6GB** | **3GB** |
+
+Still well within the 8GB Docker allocation, leaving room for Spark (native, ~2GB) when needed.
 
 ### Key Code Explained
-_To be written after phase completion_
+
+**DAG definition — the container for the workflow:**
+```python
+with DAG(
+    dag_id="telemetry_pipeline",
+    default_args=default_args,
+    schedule_interval=timedelta(minutes=15),
+    start_date=datetime(2026, 4, 1),
+    catchup=False,
+    tags=["telemetry", "pipeline"],
+) as dag:
+```
+- `with DAG(...) as dag:` — context manager that assigns all tasks defined inside to this DAG
+- `dag_id` — unique name shown in the Airflow UI
+- `schedule_interval` — how often to run (every 15 min)
+- `catchup=False` — don't run for dates that already passed
+- `tags` — labels for filtering in the UI (like Gmail labels)
+
+**BranchPythonOperator — the quality gate:**
+```python
+def quality_gate(**context):
+    all_passed = context["ti"].xcom_pull(
+        task_ids="run_quality_checks", key="all_passed"
+    )
+    if all_passed:
+        return "run_batch_aggregation"   # Happy path
+    else:
+        return "alert_quality_failure"    # Failure path
+```
+- `**context` — Airflow injects runtime context (execution date, task instance, etc.)
+- `context["ti"]` — the TaskInstance object, used to read/write XCom
+- `.xcom_pull(task_ids=..., key=...)` — read data pushed by an upstream task
+- Returns a **task_id string** — Airflow runs that task and skips all other branches
+
+**XCom — passing data between tasks:**
+```python
+# In run_quality_checks:
+context["ti"].xcom_push(key="quality_results", value=results)
+
+# In quality_gate (downstream):
+all_passed = context["ti"].xcom_pull(task_ids="run_quality_checks", key="all_passed")
+```
+- `.xcom_push(key, value)` — store a value that downstream tasks can read
+- `.xcom_pull(task_ids, key)` — retrieve a value stored by a specific upstream task
+- XCom data is serialized to JSON and stored in Airflow's database
+- Keep XCom values small (IDs, flags, summaries) — not large DataFrames
+
+**Task dependencies — defining the DAG shape:**
+```python
+t1_check_kafka >> t2_stream >> t3_quality >> t4_gate
+t4_gate >> t5_batch >> t6_metadata >> t7_success  # Happy path
+t4_gate >> t_alert                                  # Failure path
+```
+- `>>` is Airflow's "set downstream" operator. `A >> B` means "B runs after A"
+- You can chain: `A >> B >> C` (A, then B, then C)
+- Branching: `t4_gate >> t5_batch` AND `t4_gate >> t_alert` creates two paths from the gate
+- BranchPythonOperator picks which path to follow at runtime
+
+**trigger_rule — handling skipped tasks:**
+```python
+t7_success = PythonOperator(
+    task_id="notify_success",
+    trigger_rule="none_failed",
+)
+```
+- Default `trigger_rule="all_success"` requires ALL upstream tasks to succeed
+- When BranchPythonOperator skips a path, those tasks have state "skipped" (not "success")
+- `"none_failed"` means: run as long as no upstream task actually failed (skipped is OK)
+- Without this, `notify_success` would never run because `alert_quality_failure` is always skipped on the happy path
 
 ### What Could Go Wrong
-_To be written after phase completion_
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| DAG not showing in Airflow UI | Syntax error in DAG file | `docker exec airflow python /opt/airflow/dags/your_dag.py` to see the error |
+| "No module named 'kafka'" in Airflow | `kafka-python` not installed in container | `docker exec --user root airflow bash -c "python -m pip install kafka-python"` |
+| Airflow container exits immediately | DB initialization failed or port conflict | Check `docker compose logs airflow` for the exact error |
+| Tasks stay in "queued" state forever | Scheduler not running | Verify scheduler is running: `docker exec airflow ps aux \| grep scheduler` |
+| DAG runs for old dates on first enable | `catchup=True` (default) | Set `catchup=False` in DAG definition |
+| XCom pull returns None | Wrong `task_ids` or `key` in xcom_pull | Double-check the task_id string matches exactly; ensure the push happened first |
+| BranchPythonOperator skips wrong tasks | Function returns wrong task_id | The returned string must exactly match a downstream task's `task_id` |
+| "Permission denied" when installing pip packages | Airflow runs as non-root user | Use `docker exec --user root airflow bash -c "python -m pip install ..."` |
+| Airflow using too much memory | Scheduler + webserver + workers | `mem_limit: 1536m` caps it; use SequentialExecutor to avoid extra workers |
+| Task succeeds in Airflow but nothing happens on host | DAG tasks are simulated | Expected for local dev — actual Spark jobs run natively, not via Airflow |
 
 ### What I Should Be Able to Explain
-_To be written after phase completion_
+
+- [ ] What Airflow is and why manual script execution doesn't scale
+- [ ] What a DAG is and why it must be acyclic (no loops)
+- [ ] What operators are and the difference between PythonOperator, BashOperator, and BranchPythonOperator
+- [ ] What XCom is and when to use it (small metadata, not large datasets)
+- [ ] What SequentialExecutor means and why we use it on a laptop
+- [ ] What `catchup=False` does and why it matters
+- [ ] What a quality gate is and how BranchPythonOperator implements it
+- [ ] What `trigger_rule="none_failed"` means and why it's needed after a branch
+- [ ] What idempotency means and why it matters for retries
+- [ ] How Airflow's scheduling works (start_date, schedule_interval, execution order)
+- [ ] Why the Airflow container needs `kafka-python` separately from the host's venv
 
 ---
 

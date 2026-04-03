@@ -2,9 +2,9 @@
 # Phase 2: Kafka | Phase 3: + MinIO | Phase 4: + Airflow
 #
 # Usage:
-#   docker compose up kafka minio -d   ← start Kafka + MinIO
-#   docker compose logs kafka -f       ← watch Kafka's logs
-#   docker compose down                ← stop everything
+#   docker compose up kafka minio -d              ← ingestion/processing work
+#   docker compose up kafka minio airflow -d      ← pipeline orchestration work
+#   docker compose down                            ← stop everything
 
 services:
   kafka:
@@ -82,3 +82,43 @@ services:
       echo 'Bucket telemetry-warehouse created successfully'
       "
     restart: "no"                    # Run once and exit
+
+  airflow:
+    # Apache Airflow — workflow orchestrator with a web UI.
+    # Schedules and monitors our data pipelines (DAGs).
+    # Think of it as a robot manager that runs your scripts on schedule.
+    image: apache/airflow:2.9.3-python3.11
+    platform: linux/arm64
+    container_name: airflow
+    ports:
+      - "8080:8080"                  # Web UI for monitoring DAGs
+    environment:
+      # Use SequentialExecutor — runs one task at a time (perfect for laptop)
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      # SQLite database — simple, no separate DB container needed
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
+      # Don't load example DAGs (they clutter the UI)
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      # Path where Airflow looks for DAG files
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      # Disable warnings about example DAGs not loading
+      AIRFLOW__CORE__UNIT_TEST_MODE: "false"
+      # Web server auth — simple user/password for local dev
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+      # Secret key for web session encryption
+      AIRFLOW__WEBSERVER__SECRET_KEY: "local-dev-secret-key"
+      # Faster DAG parsing for development
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 30
+    volumes:
+      # Mount our DAGs folder into the container so Airflow can see them
+      - ./infra/airflow/dags:/opt/airflow/dags
+    # Initialize the DB, create an admin user, then start both scheduler and webserver
+    command: >
+      bash -c "
+      airflow db init &&
+      airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@local.dev 2>/dev/null || true &&
+      airflow scheduler &
+      airflow webserver --port 8080
+      "
+    mem_limit: 1536m                 # 1.5GB — Airflow needs room for scheduler + webserver
+    restart: unless-stopped
