@@ -1,0 +1,46 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Docker
+docker-compose.override.yml
+
+# ML artifacts
+ml/experiments/
+*.pt
+*.pth
+
+# Node
+portal/node_modules/
+portal/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Spark
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Airflow
+airflow/logs/
+airflow/airflow.db
+
+# MinIO data
+minio-data/
