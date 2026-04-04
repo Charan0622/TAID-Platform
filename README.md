@@ -1,6 +1,6 @@
-# Telemetry AI Data Platform
-
 <div align="center">
+
+# Telemetry AI Data Platform
 
 **A fully local, end-to-end data + ML platform for ingesting, processing, validating, and analyzing operational telemetry — built to run entirely on a MacBook.**
 
@@ -14,7 +14,7 @@
 
 ---
 
-[Quick Start](#-quick-start) · [Architecture](#-architecture) · [Features](#-features) · [Tech Stack](#-tech-stack) · [Screenshots](#-portal-pages) · [Project Structure](#-project-structure)
+[Quick Start](#-quick-start) · [Architecture](#-architecture) · [Features](#-features) · [Tech Stack](#-tech-stack) · [Portal Screenshots](#-portal-screenshots) · [Project Structure](#-project-structure)
 
 </div>
 
@@ -194,39 +194,71 @@ cd portal && npm run dev
 
 ---
 
-## Features
+## Portal Screenshots
 
 ### Data Catalog
-> Browse Iceberg tables with schemas, row counts, quality scores, and snapshot history
+> Browse Iceberg tables with schemas, row counts, and quality ring charts
 
-- Expandable table rows showing column types and nullability
-- Color-coded quality scores (green > 90%, yellow > 70%, red < 70%)
-- Snapshot listing for time-travel queries
+<div align="center">
+<img src="Images/Data Catalog Page.png" alt="Data Catalog" width="100%" />
+</div>
+
+<br/>
+
+- Gradient stat cards showing total tables, events, and snapshots
+- SVG quality ring charts (green/yellow/red) per table
+- Expandable rows reveal full schema with column types and nullable tags
+- Type-specific icons: green check (clean), amber warning (dead letter), blue bars (aggregates)
+
+---
 
 ### Lineage Graph
-> Interactive visualization of the complete data pipeline
+> Interactive pipeline visualization — every node is a component, every edge is a data flow
 
-- 11 nodes representing every component (sources, processors, tables, ML, API)
-- 12 edges showing data flow with transformation descriptions
-- Color-coded by type: blue (source), orange (processing), cyan (storage), red (ML), purple (API)
-- Zoom, pan, and click for details
+<div align="center">
+<img src="Images/Lineage Graph Page.png" alt="Lineage Graph" width="100%" />
+</div>
+
+<br/>
+
+- 11 nodes in logical left-to-right flow layout
+- Color-coded: blue (source), orange (processing), cyan (storage), red (ML), purple (API)
+- Glass-morphism node styling with colored borders
+- Click any node for a detail sidebar with description
+- Zoom, pan, and drag supported
+
+---
 
 ### Pipeline Health
-> Real-time monitoring of all platform services
+> Real-time monitoring dashboard with live Kafka connectivity check
 
-- Live Kafka connectivity check with topic listing
-- Airflow DAG run history with success/failure indicators
-- Table freshness monitoring (stale data alerts)
+<div align="center">
+<img src="Images/Pipeline Health Page.png" alt="Pipeline Health" width="100%" />
+</div>
+
+<br/>
+
+- Three gradient health cards: Kafka Broker, Airflow Pipelines, Iceberg Storage
+- Live status badges with pulsing green dots
+- Mini success/fail bar chart for pipeline runs
+- Recent DAG runs timeline with duration and status
 - Auto-refreshes every 30 seconds
 
-### ML Dashboard
-> Experiment tracking with training curves and evaluation metrics
+---
 
-- Experiment list with sortable columns
-- Interactive training loss curves (train + validation) via Recharts
-- Metric cards: precision, recall, F1 score, best validation loss
-- Hyperparameter table for each experiment
-- Links to dataset snapshots for reproducibility
+### ML Dashboard
+> Training loss curves, evaluation metrics, and experiment tracking
+
+<div align="center">
+<img src="Images/ML Dashboard Page.png" alt="ML Dashboard" width="100%" />
+</div>
+
+<br/>
+
+- Gradient metric cards: Best Val Loss, Precision (1.00), Recall (0.60), F1 Score (0.75)
+- Area chart with gradient fills showing train vs validation loss over 50 epochs
+- Experiment list with active selection highlight
+- Grouped configuration panel: hyperparameters, dataset info, results
 
 ---
 
