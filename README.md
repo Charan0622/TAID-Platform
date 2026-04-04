@@ -349,7 +349,7 @@ flowchart LR
 ```
 TAID/
 ├── docker-compose.yml              # Kafka + MinIO + Airflow containers
-├── CLAUDE.md                       # Build blueprint and instructions
+├── BUILD_GUIDE.md                  # Build blueprint and instructions
 ├── EXPLANATION.md                  # Complete knowledge base (all concepts explained)
 │
 ├── ingestion/                      # Data producers

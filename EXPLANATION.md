@@ -1,10 +1,10 @@
 # EXPLANATION.md — Telemetry AI Data Platform Knowledge Base
 
 > **What is this file?**
-> This is your personal, complete guide to every single thing built in this project. After each phase, Claude updates this file with detailed explanations of what was done, what every technology means, how the code works, and what you should now understand. By the end of all 7 phases, this file alone should let you explain the entire platform to anyone — without looking at the code.
+> This is your personal, complete guide to every single thing built in this project. After each phase, this file is updated with detailed explanations of what was done, what every technology means, how the code works, and what you should now understand. By the end of all 7 phases, this file alone should let you explain the entire platform to anyone — without looking at the code.
 
 > **How this file is updated:**
-> After every phase, Claude will propose subheadings to add. You confirm them. Then Claude writes the content. Nothing gets added without your approval on the structure first.
+> After every phase, new subheadings are proposed for approval. Once confirmed, the content is written. Nothing gets added without approval on the structure first.
 
 ---
 
@@ -967,7 +967,7 @@ Phase 5 architecture:
 
 **Key architectural decisions:**
 - PyTorch runs **natively** (not in Docker) to access MPS GPU acceleration. Docker containers run Linux and can't access the Mac's Metal GPU.
-- Stopped Airflow container during training to free ~1.2GB RAM — per CLAUDE.md's memory management plan, never run Spark + Airflow + PyTorch simultaneously.
+- Stopped Airflow container during training to free ~1.2GB RAM — per BUILD_GUIDE.md's memory management plan, never run Spark + Airflow + PyTorch simultaneously.
 - Data is loaded via Spark (to read Iceberg tables), converted to Pandas, then to PyTorch tensors. This Spark→Pandas handoff is fine for our dataset size.
 - Experiment tracking uses simple JSON files instead of MLflow's full tracking server — lightweight and sufficient for local dev.
 - Pivoting aggregates across all devices per time window (not per-device) because our small dataset is too sparse for per-device vectors.
@@ -1588,7 +1588,7 @@ useEffect(() => {
 
 ```
 TAID/
-├── CLAUDE.md                              # Master blueprint and build instructions
+├── BUILD_GUIDE.md                         # Master blueprint and build instructions
 ├── EXPLANATION.md                         # This file — complete knowledge base
 ├── docker-compose.yml                     # Kafka + MinIO + Airflow containers
 ├── .gitignore                             # Excludes venv, caches, node_modules, etc.

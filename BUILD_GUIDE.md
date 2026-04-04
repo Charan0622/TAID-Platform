@@ -1,8 +1,8 @@
-# CLAUDE.md — Telemetry AI Data Platform
+# BUILD_GUIDE.md — Telemetry AI Data Platform
 
 ## Who This Is For
 
-A developer on a MacBook Air M4 with 16GB RAM who has never used Apache tools (Kafka, Spark, Iceberg, Airflow) before. They have Claude Max. Every instruction must assume zero prior experience with these tools. Explain every concept before using it. Never skip steps.
+A developer on a MacBook Air M4 with 16GB RAM who has never used Apache tools (Kafka, Spark, Iceberg, Airflow) before. Every instruction assumes zero prior experience with these tools. Every concept is explained before use. No steps are skipped.
 
 ---
 
@@ -26,7 +26,7 @@ This is a LEARNING BUILD — optimized for a single laptop, not production scale
 
 | Resource       | Limit                                                              |
 | -------------- | ------------------------------------------------------------------ |
-| RAM            | 16GB total — Docker gets 8GB max, leave 8GB for OS + IDE + Claude  |
+| RAM            | 16GB total — Docker gets 8GB max, leave 8GB for OS + IDE + tools  |
 | CPU            | M4 chip (ARM64) — all Docker images MUST be arm64/aarch64 compatible |
 | Disk           | Keep total project under 15GB including Docker images              |
 | Network        | All services run on localhost, no cloud accounts needed            |
@@ -46,7 +46,7 @@ This is a LEARNING BUILD — optimized for a single laptop, not production scale
 
 ```
 telemetry-platform/
-├── CLAUDE.md                    ← This file (master instructions)
+├── BUILD_GUIDE.md               ← This file (master instructions)
 ├── docker-compose.yml           ← Runs Kafka, Spark, Airflow, MinIO
 ├── .env                         ← Environment variables (ports, passwords)
 │
@@ -561,7 +561,7 @@ docker system prune -a --volumes
 
 ---
 
-## Execution Rules for Claude
+## Execution Rules
 
 When the user asks to build any phase, follow these rules:
 
