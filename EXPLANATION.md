@@ -1255,13 +1255,13 @@ consumer.close()
 
 1. **`portal/`** — Initialized with Vite + React template, installed dependencies: axios, react-router-dom, recharts, @xyflow/react, tailwindcss, @tailwindcss/vite.
 2. **`portal/vite.config.js`** — Configured Vite with React and Tailwind CSS plugins.
-3. **`portal/src/index.css`** — Replaced Vite defaults with Tailwind import (`@import "tailwindcss"`).
+3. **`portal/src/index.css`** — Tailwind import plus custom CSS: shimmer loading animations, pulse-dot keyframes, glow effects (blue/green/orange/purple/red/cyan box-shadows), fade-in animations, dark custom scrollbar.
 4. **`portal/src/main.jsx`** — Wrapped App in BrowserRouter for client-side routing.
-5. **`portal/src/App.jsx`** — Main layout with dark sidebar navigation (4 NavLinks) and Routes for 4 pages.
-6. **`portal/src/pages/DataCatalog.jsx`** — Table listing all Iceberg datasets from `/api/datasets`. Click to expand schema details. Color-coded quality scores (green/yellow/red).
-7. **`portal/src/pages/LineageGraph.jsx`** — Interactive React Flow diagram from `/api/lineage`. 11 nodes colored by type (blue=source, orange=processing, cyan=storage, red=ML, purple=API), 12 animated edges. Zoomable and pannable.
-8. **`portal/src/pages/PipelineHealth.jsx`** — Three status cards (Kafka, Pipelines, Storage) + DAG runs table + table freshness table. Auto-refreshes every 30 seconds.
-9. **`portal/src/pages/MLDashboard.jsx`** — Experiment list table, metric cards (val loss, precision, recall, F1), Recharts training loss curve, hyperparameters grid. Click experiment to view detail.
+5. **`portal/src/App.jsx`** — Professional dark layout (`#0a0b0f` background) with sidebar: gradient logo badge (blue→violet), SVG icons per nav item, active state with gradient border glow, live "All systems operational" indicator with pulsing green dot. Page transitions use fade-in animation.
+6. **`portal/src/pages/DataCatalog.jsx`** — Summary stat cards at top (gradient backgrounds, SVG icons) showing total tables, events, snapshots. Table cards with type-specific icons (green check for clean, amber warning for dead letter, blue bars for aggregates). SVG ring chart for quality scores. Expandable schema with column type badges, nullable tags, hover effects. Chevron rotation animation.
+7. **`portal/src/pages/LineageGraph.jsx`** — React Flow with manually positioned nodes in logical left-to-right pipeline layout. Glass-morphism node styling (transparent bg, colored borders). Arrow markers on edges. Colored icon badges (S/P/D/M/A) inside nodes. Click-to-reveal detail sidebar with node description.
+8. **`portal/src/pages/PipelineHealth.jsx`** — Three gradient health cards with colored glows (green Kafka, blue Pipelines, violet Storage). Pill-shaped status badges with embedded dots. Mini success/fail bar chart in pipelines card. "Live - refreshes every 30s" indicator. DAG run timeline with hover states. Table freshness with row-level status dots.
+9. **`portal/src/pages/MLDashboard.jsx`** — Gradient metric cards with SVG icons and subtitle descriptions. Area chart with gradient fills (blue train, violet validation) and custom dark tooltip. Experiment list with active border highlight and flask icon. Split layout: experiments list + grouped configuration panel (Hyperparameters, Dataset, Results sections). Empty state with illustration.
 
 ### Step-by-Step Changes
 
@@ -1269,18 +1269,24 @@ consumer.close()
 2. Ran `npm install` — installed base dependencies
 3. Installed additional packages: `npm install axios react-router-dom recharts @xyflow/react tailwindcss @tailwindcss/vite`
 4. Configured Tailwind in `vite.config.js` — added `tailwindcss()` to plugins
-5. Replaced `index.css` with single Tailwind import
+5. Replaced `index.css` with Tailwind import
 6. Updated `main.jsx` — wrapped App in `<BrowserRouter>` for React Router
-7. Rewrote `App.jsx` — dark theme sidebar with NavLink navigation, Routes for 4 pages
+7. Wrote `App.jsx` — dark theme sidebar with NavLink navigation, Routes for 4 pages
 8. Created `pages/` directory
-9. Wrote `DataCatalog.jsx` — fetches `/api/datasets`, expandable rows show schema
-10. Wrote `LineageGraph.jsx` — fetches `/api/lineage`, converts to React Flow nodes/edges
-11. Wrote `PipelineHealth.jsx` — fetches 3 health endpoints, auto-refreshes every 30s
-12. Wrote `MLDashboard.jsx` — fetches experiments, displays Recharts loss curves and metric cards
-13. Removed default `App.css` (replaced by Tailwind)
-14. Started dev server: `npm run dev` — running on port 5173
-15. Verified all pages load, API data renders, CORS working
-16. All 7 Phase 7 verification checks passed
+9. Wrote all 4 page components (DataCatalog, LineageGraph, PipelineHealth, MLDashboard)
+10. Removed default `App.css` (replaced by Tailwind)
+11. Started dev server: `npm run dev` — running on port 5173
+12. Verified all pages load, API data renders, CORS working
+13. All 7 Phase 7 verification checks passed
+14. **UI Redesign** — full professional overhaul:
+    - Added custom CSS animations: shimmer loading skeletons, pulse-dot for live indicators, fade-in page transitions, glow effects for focused cards
+    - Redesigned sidebar: gradient logo badge, SVG nav icons, active state with gradient border, live status indicator
+    - DataCatalog: gradient stat cards, type-specific icons, SVG quality ring charts, expandable schema with column tags
+    - LineageGraph: manual logical layout (left-to-right flow), glass-morphism nodes, arrow markers, detail sidebar on click
+    - PipelineHealth: gradient health cards with colored glows, pill-shaped badges with dots, mini bar charts, live refresh indicator
+    - MLDashboard: area chart with gradient fills, custom tooltip, experiment list with active highlight, split config panel
+    - Consistent typography system: 10px uppercase labels, 11-12px body, 13px nav, tracking and letter-spacing throughout
+    - Dark scrollbar, near-black background (#0a0b0f), glass-like card surfaces (white/[0.02])
 
 ### Concepts & Definitions
 
@@ -1310,7 +1316,15 @@ consumer.close()
 
 **Recharts** — A React charting library built on D3. We use `<LineChart>` to display training loss curves — train loss and validation loss over epochs. `<ResponsiveContainer>` makes the chart resize with its parent. Recharts handles axes, tooltips, legends, and smooth line rendering.
 
-**Conditional Rendering** — Showing different UI based on state. `if (loading) return <div>Loading...</div>` shows a loading message while data is being fetched. `if (error) return <div>Error: {error}</div>` shows an error message if the API call failed. This ensures the user always sees something meaningful, never a blank page or crash.
+**Conditional Rendering** — Showing different UI based on state. `if (loading) return <LoadingSkeleton />` shows animated shimmer placeholders while data is being fetched. `if (error) return <ErrorState />` shows a styled error card. This ensures the user always sees something meaningful, never a blank page or crash.
+
+**CSS Animations (Shimmer, Pulse, Fade-in)** — Custom keyframe animations that make the UI feel alive. `shimmer` creates a moving gradient effect on loading placeholders (like a sweeping light). `pulse-dot` makes status dots glow and dim rhythmically to indicate "live." `fade-in` smoothly slides content up when pages load. All defined in `index.css` using `@keyframes` and applied via utility classes.
+
+**Glass-morphism** — A design technique that makes elements look like frosted glass: semi-transparent backgrounds (`rgba(255,255,255,0.02)`), subtle borders (`border-white/5`), and backdrop blur. Combined with dark backgrounds, it creates depth without heavy shadows. Used on cards, nodes in the lineage graph, and the sidebar.
+
+**SVG Ring Charts** — Quality scores are rendered as circular progress indicators using SVG `<circle>` elements. The `strokeDasharray` and `strokeDashoffset` properties control how much of the circle is drawn — a 90% score draws 90% of the circle. This is a lightweight alternative to charting libraries for simple progress visualization.
+
+**Glow Effects** — Subtle colored box-shadows that give cards a "glowing border" appearance. `.glow-blue { box-shadow: 0 0 20px -5px rgba(59,130,246,0.15) }` creates a soft blue aura. Applied conditionally based on status: green glow for healthy, red for errors. Defined in `index.css` as utility classes.
 
 ### Architecture Notes
 
@@ -1387,41 +1401,63 @@ useEffect(() => {
 
 **Conditional rendering — loading, error, and data states:**
 ```jsx
-if (loading) return <div className="text-gray-400">Loading...</div>
-if (error) return <div className="text-red-400">Error: {error}</div>
+if (loading) return <div><PageHeader /><LoadingSkeleton /></div>  // Shimmer animation
+if (error) return <div><PageHeader /><ErrorState message={error} /></div>  // Styled error card
 return <div>...actual content...</div>
 ```
-- Three possible states: loading (show spinner), error (show message), success (show data)
+- Three possible states: loading (animated shimmer skeletons), error (styled error card with icon), success (full data)
 - Every page follows this pattern — the user never sees a blank page or cryptic error
+- The shimmer animation is defined in CSS: `background: linear-gradient(90deg, #1f2937 25%, #374151 50%, #1f2937 75%)` with `animation: shimmer 1.5s infinite`
 
-**React Flow — converting API data to graph:**
+**SVG Quality Ring Chart (DataCatalog):**
 ```jsx
-function toFlowNodes(apiNodes) {
-  return apiNodes.map((node, i) => ({
-    id: node.id,
-    data: { label: <div>{node.label}</div> },
-    position: { x: (i % 4) * 250, y: Math.floor(i / 4) * 150 },
-    style: { background: typeColors[node.type], color: 'white' },
-  }))
+function QualityRing({ score }) {
+  const circumference = 2 * Math.PI * 18
+  const offset = circumference - (score * circumference)
+  return (
+    <svg className="w-12 h-12 -rotate-90" viewBox="0 0 44 44">
+      <circle cx="22" cy="22" r="18" stroke="#1f2937" strokeWidth="3" />
+      <circle cx="22" cy="22" r="18" stroke={color} strokeWidth="3"
+        strokeDasharray={circumference} strokeDashoffset={offset} />
+    </svg>
+  )
 }
 ```
-- React Flow needs nodes with `id`, `data.label`, `position`, and `style`
-- We auto-layout nodes in a grid: `(i % 4) * 250` = 4 columns, `Math.floor(i / 4) * 150` = rows
-- Color is determined by `typeColors[node.type]` — source=blue, processing=orange, etc.
+- Uses SVG `strokeDasharray` and `strokeDashoffset` to draw a partial circle
+- `circumference` = full circle length. `offset` = how much to hide (100% score = show all, 0% = hide all)
+- `-rotate-90` starts the arc from the top instead of the right side
+- Color changes based on score: green >= 90%, yellow >= 70%, red < 70%
 
-**Recharts — training loss curve:**
+**React Flow — manual pipeline layout:**
 ```jsx
-<LineChart data={lossChartData}>
-  <XAxis dataKey="epoch" />
-  <YAxis />
-  <Line dataKey="train" stroke="#3b82f6" name="Train Loss" />
-  <Line dataKey="validation" stroke="#f97316" name="Val Loss" />
-</LineChart>
+const nodePositions = {
+  fake_producer:    { x: 0, y: 0 },
+  kafka_raw:        { x: 300, y: 0 },
+  stream_processor: { x: 600, y: 0 },
+  clean_events:     { x: 900, y: -80 },
+  dead_letter:      { x: 900, y: 100 },
+  ...
+}
 ```
-- `data` — array of `{epoch, train, validation}` objects
-- `<XAxis dataKey="epoch">` — use epoch number as x-axis
-- Each `<Line>` plots one series from the data
-- `stroke` sets the line color, `name` appears in the legend
+- Nodes are positioned manually to create a logical left-to-right flow matching the actual data pipeline
+- Branches (clean_events vs dead_letter) are positioned vertically to show the validation split
+- Glass-morphism styling: `background: 'rgba(59,130,246,0.08)'`, `border: '1px solid rgba(59,130,246,0.3)'`
+- Each node has a colored icon badge (S=Source, P=Processing, D=Data/Storage, M=ML, A=API)
+
+**Recharts — area chart with gradient fills:**
+```jsx
+<defs>
+  <linearGradient id="trainGrad" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.15}/>
+    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+  </linearGradient>
+</defs>
+<Area type="monotone" dataKey="train" stroke="#3b82f6" fill="url(#trainGrad)" />
+```
+- SVG `<linearGradient>` defines a vertical color fade (opaque at top, transparent at bottom)
+- `<Area>` with `fill="url(#trainGrad)"` fills below the line with the gradient — creates a polished "glow under the curve" effect
+- Two areas layered: blue for train loss, violet for validation loss
+- Custom tooltip (`<Tooltip content={<CustomTooltip />}`) renders a dark card with color dots matching each line
 
 **Auto-refresh with setInterval:**
 ```jsx
